@@ -35,6 +35,11 @@ function _rand() {
 export function rnd(a, b) { return a + _rand() * (b - a); }
 export function pick(a)   { return a[Math.floor(_rand() * a.length)]; }
 
+// Per-text harmony state — declared up here (before wordNoteScale, which reads
+// them) so there's no temporal-dead-zone fragility. Set by deriveTextHarmony().
+let currentScale = buildScale(110.00, 'minor');
+let currentMood = 'minor';
+
 // Word-note palette is built per-text from currentScale (set by deriveTextHarmony),
 // spread across octaves that match the mood's register:
 // dark moods → lower, tighter range; bright moods → wider, higher range
@@ -484,9 +489,6 @@ export function playPunctuation(ch, dests, intensity) {
   }
 }
 
-let currentScale = buildScale(110.00, 'minor');
-let currentMood = 'minor';
-
 export function deriveTextHarmony(text) {
   const { mode, normScore, tenseScore } = detectMood(text);
   const h = hashText(text);
@@ -634,8 +636,6 @@ export function startAmbient(dests) {
 
   tick();
 }
-
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ── State accessors for main.js (no logic change — just module boundary wrappers) ──
 export function setStopping(v) { stopping = v; }
