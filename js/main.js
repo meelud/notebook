@@ -9,7 +9,6 @@ import {
 
 const editor = document.getElementById('editor');
 const render = document.getElementById('render');
-const ph     = document.getElementById('ph');
 const bPlay  = document.getElementById('bPlay');
 const bStop  = document.getElementById('bStop');
 const bSave  = document.getElementById('bSave');
@@ -71,7 +70,9 @@ function tokenize(text) {
 }
 
 function esc(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g, '\n');
+  // #render uses white-space: pre-wrap, so real newlines render correctly —
+  // we only need to neutralize HTML-significant characters here.
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 function buildRender(text, a, b) {
@@ -156,6 +157,7 @@ async function play() {
 
   let voiceIdx = pick(VOICE_GROUPS.statement);
   let wordsSeen = 0;
+  const totalWordsSafe = Math.max(1, totalWords); // guard against text with no words (e.g. "!!!") → no NaN%
 
   for (let i = 0; i < playable.length; i++) {
     if (isStopping()) break;
@@ -192,8 +194,8 @@ async function play() {
     // reading pace: longer words get more time
     const base = 300 + wlen * 28;
     const spd  = Math.min(600, base) + rnd(-30, 50);
-    pf.style.width = Math.round((wordsSeen / totalWords) * 100) + '%';
-    status(Math.round((wordsSeen / totalWords) * 100) + '%');
+    pf.style.width = Math.round((wordsSeen / totalWordsSafe) * 100) + '%';
+    status(Math.round((wordsSeen / totalWordsSafe) * 100) + '%');
     await sleep(spd);
   }
 
@@ -249,7 +251,6 @@ bClear.addEventListener('click', () => {
   editor.value = '';
   editor.style.display = '';
   render.style.display = 'none';
-  ph.style.display = 'block';
   bPlay.disabled = true; bSave.disabled = true;
   audioBlob = null; chunks = [];
   wcEl.textContent = '0 words';
@@ -261,7 +262,6 @@ bClear.addEventListener('click', () => {
 
 editor.addEventListener('input', () => {
   const v = editor.value;
-  ph.style.display = v ? 'none' : 'block';
   bPlay.disabled = !v.trim();
   const w = v.trim().split(/\s+/).filter(Boolean).length;
   wcEl.textContent = w + (w === 1 ? ' word' : ' words');
