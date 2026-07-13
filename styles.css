@@ -1,0 +1,27 @@
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #080808;
+  --text: #c8c3b8;
+  --dim: #1e1e1b;
+  --dimtxt: #42423c;
+  --accent: #7a9068;
+  --hl: #e8e2d6;
+  --metal-hi: #5e5238;
+  --metal-mid: #34291c;
+  --metal-lo: #15110b;
+  --brass: #a48a52;
+  --brass-dim: #5e4f30;
+}
+html, body { height: 100%; background: var(--bg); color: var(--text); }
+body { display: flex; flex-direction: column; align-items: center; font-family: 'Inter', sans-serif; }
+
+#bar {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex; align-items: center; gap: 0;
+  padding: 13px 26px;
+  border-radius: 5px;
+  background:
+    linear-gradient(180deg, var(--metal-hi) 0%
