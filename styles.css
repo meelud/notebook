@@ -157,13 +157,16 @@ body { display: flex; flex-direction: column; align-items: center; font-family: 
   100% { color: var(--hl); text-shadow: 0 0 26px rgba(232,226,214,0.22); transform: scale(1) translateY(0); }
 }
 
-#ph {
-  position: absolute; top: 100px; left: 0;
-  /* match the editor's serif so there's no jarring font swap when typing begins */
+/* native textarea placeholder — the browser hides it automatically the moment
+   you start typing, so it can never get "stuck" on screen. Uses the same serif
+   as the editor text so there's no font swap, just lighter + non-italic. */
+#editor::placeholder {
   font-family: 'EB Garamond', Georgia, serif;
-  font-style: italic; font-weight: 400; font-size: 21px; line-height: 2;
+  font-style: normal;
+  font-size: 21px;
   letter-spacing: 0.01em;
-  color: var(--dimtxt); pointer-events: none;
+  color: var(--dimtxt);
+  opacity: 1; /* Firefox lowers placeholder opacity by default */
 }
 
 #foot {
