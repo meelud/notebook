@@ -280,12 +280,12 @@ export const INTENSIFIERS = {
   'utterly': 1.9, 'deeply': 1.7, 'terribly': 1.8, 'insanely': 1.9,
   'ridiculously': 1.8, 'unbelievably': 1.9, 'immensely': 1.8, 'profoundly': 1.8,
   'awfully': 1.7, 'exceptionally': 1.8, 'remarkably': 1.6, 'seriously': 1.5,
-  'freaking': 1.7, 'damn': 1.6, 'hella': 1.7, 'mega': 1.7, 'way': 1.4,
+  'freaking': 1.7, 'hella': 1.7, 'mega': 1.7, 'way': 1.4,
   'too': 1.4, 'such': 1.4, 'most': 1.5, 'quite': 1.3, 'pretty': 1.25,
   // English — diminish
   'slightly': 0.5, 'somewhat': 0.6, 'kinda': 0.6, 'kind of': 0.6,
   'sorta': 0.6, 'a bit': 0.6, 'a little': 0.55, 'little': 0.6, 'mildly': 0.55,
-  'barely': 0.4, 'hardly': 0.4, 'faintly': 0.5, 'moderately': 0.7, 'fairly': 0.75,
+  'faintly': 0.5, 'moderately': 0.7, 'fairly': 0.75,
   // Persian — amplify
   'خیلی': 1.7, 'بسیار': 1.7, 'خیلی‌خیلی': 2.0, 'واقعا': 1.5, 'واقعاً': 1.5,
   'حسابی': 1.6, 'بشدت': 1.9, 'شدیدا': 1.9, 'شدیداً': 1.9, 'کاملا': 1.7,
@@ -297,6 +297,17 @@ export const INTENSIFIERS = {
 
 // How many following words a negator/intensifier reaches over.
 const MODIFIER_SCOPE = 3;
+
+// Build a flat lookup once: word -> { weight, tense } for fast matching.
+// Defined here (before the helpers that read it) so there's no
+// temporal-dead-zone fragility.
+export const WORD_LOOKUP = (() => {
+  const map = {};
+  Object.values(EMOTION_LEXICON).forEach(({ weight, tense, words }) => {
+    words.forEach(w => { map[w] = { weight, tense }; });
+  });
+  return map;
+})();
 
 // Persian verbs are usually negated at the END of the clause ("خوشحال نیستم"),
 // so a Persian negator must also flip the emotion words BEFORE it, not just after.
@@ -354,17 +365,19 @@ export function hashText(text) {
   return h;
 }
 
-// Build a flat lookup once: word -> { weight, tense } for fast matching
-export const WORD_LOOKUP = (() => {
-  const map = {};
-  Object.values(EMOTION_LEXICON).forEach(({ weight, tense, words }) => {
-    words.forEach(w => { map[w] = { weight, tense }; });
-  });
-  return map;
-})();
+// Normalize Arabic-form characters that Arabic/mobile keyboards produce to their
+// Persian equivalents, and strip Arabic diacritics/tatweel, so the lexicon
+// matches regardless of how the user typed (ك→ک, ي/ﻯ→ی, ة→ه, remove harakat).
+function normalizePersian(s) {
+  return s
+    .replace(/\u0643/g, '\u06A9')          // ك → ک
+    .replace(/[\u064A\u0649]/g, '\u06CC')  // ي, ى → ی
+    .replace(/\u0629/g, '\u0647')          // ة → ه
+    .replace(/[\u064B-\u0652\u0640]/g, ''); // harakat + tatweel
+}
 
 export function detectMood(text) {
-  const lower = text.toLowerCase();
+  const lower = normalizePersian(text.toLowerCase());
   // keep apostrophes so contracted negators like "don't"/"can't" survive tokenizing
   const words = lower.match(/[a-zA-Z’'ا-یآ‌]+/g) || [];
 
@@ -413,18 +426,21 @@ export function detectMood(text) {
   // English/general negators flip the emotion words that FOLLOW them.
   // Persian negators additionally flip emotion words BEFORE them in the clause,
   // because Persian negates the verb at the end ("خوشحال نیستم" = not happy).
-  const flipped = new Array(n).fill(false);
+  // Count how many negations reach each emotion token; an EVEN count cancels
+  // out ("not not happy" stays positive), an ODD count flips it.
+  const flipCount = new Array(n).fill(0);
   for (let i = 0; i < n; i++) {
-    if (selfNeg[i] && entry[i]) flipped[i] = true; // attached-prefix negation flips itself
+    if (selfNeg[i] && entry[i]) flipCount[i]++; // attached-prefix negation flips itself
     if (isNeg[i]) {
       for (let j = i + 1; j <= i + MODIFIER_SCOPE && j < n; j++)
-        if (entry[j]) flipped[j] = true;
+        if (entry[j]) flipCount[j]++;
     }
     if (isNegFa[i]) {
-      for (let j = i + 1; j <= i + MODIFIER_SCOPE && j < n; j++) if (entry[j]) flipped[j] = true;
-      for (let j = i - 1; j >= i - MODIFIER_SCOPE && j >= 0; j--) if (entry[j]) flipped[j] = true;
+      for (let j = i + 1; j <= i + MODIFIER_SCOPE && j < n; j++) if (entry[j]) flipCount[j]++;
+      for (let j = i - 1; j >= i - MODIFIER_SCOPE && j >= 0; j--) if (entry[j]) flipCount[j]++;
     }
   }
+  const flipped = flipCount.map(c => c % 2 === 1);
 
   let score = 0, tense = 0;
   for (let i = 0; i < n; i++) {
