@@ -183,22 +183,23 @@ async function play() {
     setAmbientDensity(tok.paraPos === 'start' ? 0.55 : tok.paraPos === 'end' ? 1.35 : 1);
 
     const freq = pick(wordNoteScale());
-    let vol    = rnd(0.18, 0.52);
-    const dur  = rnd(0.22, 0.45);
+    // wider dynamic range → more contrast between words = more alive & dynamic
+    let vol    = rnd(0.15, 0.62);
+    const dur  = rnd(0.22, 0.48);
 
-    // (6) breathing dynamics — a slow volume swell/ebb across the sentence so the
-    // reading rises and falls like a spoken phrase instead of staying flat. A gentle
-    // sine over the words, plus a small lift toward the denser end of the text.
-    const phraseWave = 0.82 + 0.18 * Math.sin(wordsSeen * 0.5);
+    // (6) breathing dynamics — a deeper swell/ebb across the phrase so the reading
+    // rises and falls like real speech instead of staying flat. Two overlapping
+    // sines give an organic, non-repeating contour.
+    const phraseWave = 0.72 + 0.20 * Math.sin(wordsSeen * 0.5) + 0.08 * Math.sin(wordsSeen * 0.17);
     vol *= phraseWave;
 
-    // (3) stereo drift — successive words wander slowly across the stereo field
-    // (a slow sine), giving spatial depth. Kept within ±0.6 so it never feels
-    // hard-panned, just "wide". Deterministic (position-based).
+    // (3) stereo drift — successive words wander across the stereo field for
+    // spatial depth. Kept within ±0.6 so it feels "wide", never hard-panned.
     const pan = Math.sin(wordsSeen * 0.37) * 0.6;
 
-    // shift voice within the sentence's appropriate group for variety
-    if (randUnit() < 0.4) voiceIdx = pick(group);
+    // shift voice more often so successive words get more timbral variety —
+    // this is a big part of what made the reading feel dynamic word-to-word.
+    if (randUnit() < 0.6) voiceIdx = pick(group);
     playPannedVoice(voiceIdx, freq, vol, dur, dests, pan);
     animBars(vol);
 

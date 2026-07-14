@@ -467,12 +467,26 @@ export function detectMood(text) {
   const norm = score / Math.max(3, Math.sqrt(words.length));
   const tenseNorm = tense / Math.max(3, Math.sqrt(words.length));
 
-  // map continuous score onto 16-mode spectrum
-  const clamped = Math.max(-1.5, Math.min(1.5, norm));
-  let idx = Math.round(((clamped + 1.5) / 3.0) * (MODE_ORDER.length - 1));
+  // How much emotional signal is actually present (not just neutral filler words).
+  const emotionHits = entry.reduce((a, e) => a + (e ? 1 : 0), 0);
+  const emotionDensity = emotionHits / Math.max(1, words.length);
 
-  // high tension → pull toward the exotic/unstable cluster (first 5 modes)
-  if (tenseNorm > 0.5 && idx > 3) idx = Math.max(1, idx - 4);
+  let idx;
+  if (emotionDensity < 0.12) {
+    // NEUTRAL text (no real feeling words): don't force it into the dark middle
+    // of the spectrum — that made every plain sentence sound the same & gloomy.
+    // Instead pick a *bright-to-mid* mode that VARIES by the text itself (hash),
+    // so ordinary writing sounds open, and different neutral texts differ.
+    const h = hashText(text);
+    // choose among the brighter half (indices 8..15 = dorian→major side)
+    idx = 8 + (h % (MODE_ORDER.length - 8));
+  } else {
+    // map continuous score onto 16-mode spectrum
+    const clamped = Math.max(-1.5, Math.min(1.5, norm));
+    idx = Math.round(((clamped + 1.5) / 3.0) * (MODE_ORDER.length - 1));
+    // high tension → pull toward the exotic/unstable cluster (first 5 modes)
+    if (tenseNorm > 0.5 && idx > 3) idx = Math.max(1, idx - 4);
+  }
 
   idx = Math.max(0, Math.min(MODE_ORDER.length - 1, idx));
   return { mode: MODE_ORDER[idx], normScore: norm, tenseScore: tenseNorm };

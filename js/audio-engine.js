@@ -668,11 +668,15 @@ export function startAmbient(dests) {
   //     louder, lower, and more present the drone. Bright text ≈ silent.
   let droneNode = null;
   function startDrone() {
-    if (sig.darkness < 0.25) return; // bright text: no drone at all
+    // Only real, emotionally-dark text gets a drone. Gate on darkness AND density
+    // so a neutral sentence (which lands mid-scale by default) stays clean and
+    // doesn't get a drone that would make every piece sound the same.
+    const droneStrength = Math.max(0, sig.darkness - 0.5) * 2 * Math.min(1, sig.density * 1.5);
+    if (droneStrength < 0.15) return;
     const rootHz = currentScale[0] * 0.5; // an octave below the tonic
     const master = c.createGain();
     master.gain.value = 0;
-    const target = 0.05 + sig.darkness * 0.10; // 0.05..0.15 by darkness
+    const target = 0.04 + droneStrength * 0.09; // scaled by how dark AND saturated the text is
     master.gain.linearRampToValueAtTime(target, c.currentTime + 4);
     // two slightly detuned low oscillators through a very low lowpass = warm sub drone
     [-4, 4].forEach(det => {
