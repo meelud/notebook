@@ -1,62 +1,47 @@
 # notebook
 
-A minimalist notepad that turns whatever you write into a piece of generative
-ambient music. As the text is read back word by word, a matching piece is
-synthesized live in the browser — no recorded audio, everything is generated
-from scratch with the **Web Audio API**.
+هر چی بنویسی رو تبدیل می‌کنه به یه قطعه موسیقی آمبینت که همون لحظه ساخته می‌شه. متنت که کلمه‌به‌کلمه خونده می‌شه، یه موسیقی زنده باهاش کوک می‌شه — هیچ صدای ضبط‌شده‌ای در کار نیست، همه‌چیز از صفر توی مرورگر با **Web Audio API** ساخته می‌شه.
 
-## How it works
+## چطوری کار می‌کنه؟
 
-- **Mood → key.** A bilingual (English / Persian) emotion lexicon reads the
-  text and maps its mood onto one of nine musical modes, from dark (minor,
-  locrian, phrygian…) to bright (lydian, major). Punctuation nudges the mood.
-- **Deterministic per text.** A seeded PRNG (mulberry32) is re-seeded from a
-  hash of the exact text on every play, so **the same text always produces the
-  same piece** — same key, melody, voices, and timing — while different text
-  yields something different.
-- **22 synthesized voices.** Pads, plucks, breath, bells, piano, marimba,
-  choir, cello, kalimba, gong and more — each built from oscillators, filters
-  and envelopes. Sentence type (statement / question / exclamation) picks the
-  voice group.
-- **Shared-clock ambient bed.** An Aphex-Twin-inspired ambient layer (pad, sub
-  pulse, motif, tape warmth) locked to one slow ~52 BPM clock. Density rises
-  from the start of the text toward the end.
-- **Record & save.** Playback is captured via `MediaRecorder` and can be saved
-  as a `.webm` file.
+- **حال متن → گام موسیقی.** یه فرهنگ لغتِ احساسی دوزبانه (فارسی/انگلیسی) متنت رو می‌خونه و حال‌وهواش رو می‌ذاره روی یکی از ۹ گام موسیقایی — از تاریک (مینور، لوکرین، فریجین…) تا روشن (لیدین، ماژور). نقطه‌گذاری هم حال‌وهوا رو یه کم جابه‌جا می‌کنه.
+- **هر متن، صدای خودش.** یه مولد عدد تصادفی seed‌دار (mulberry32) هر بار از روی هشِ دقیقِ متنت دوباره seed می‌شه. یعنی **یه متن ثابت همیشه همون قطعه رو می‌سازه** — همون گام، همون ملودی، همون صداها، همون ریتم — ولی متن متفاوت یه چیز کاملاً تازه.
+- **۲۲ تا صدای ساختگی.** پد، پلاک، نفس، زنگ، پیانو، ماریمبا، کر، ویولنسل، کالیمبا، گونگ و کلی چیز دیگه — هر کدوم از دل اسیلاتور و فیلتر و پاکت صدا ساخته شدن. نوع جمله (خبری / سوالی / تعجبی) تعیین می‌کنه کدوم دسته صدا پخش بشه.
+- **بستر آمبینتِ همیشگی.** یه لایه‌ی آمبینت با الهام از Aphex Twin (پد، پالسِ بم، موتیف، گرمای نوار) که همه‌ش روی یه کلاکِ کندِ ~۵۲ BPM قفل شده. هرچی به آخر متن نزدیک می‌شی، پُرتر و متراکم‌تر می‌شه.
+- **ضبط و ذخیره.** صدای پخش‌شده با `MediaRecorder` ضبط می‌شه و می‌تونی به شکل یه فایل `.webm` ذخیره‌ش کنی.
 
-## Run it
+## اجراش کن
 
-It's a static site — no build step, no dependencies.
+یه سایت استاتیکه — نه build می‌خواد، نه هیچ وابستگی‌ای.
 
-- Open `index.html` directly in a modern browser, **or**
-- Serve the folder with any static server, e.g.:
+- یا مستقیم `index.html` رو توی یه مرورگر امروزی باز کن،
+- یا کل پوشه رو با یه سرور استاتیک بالا بیار، مثلاً:
 
 ```sh
 python3 -m http.server
 ```
 
-then visit the printed local URL.
+بعدش برو سراغ آدرس لوکالی که چاپ می‌کنه.
 
-> Uses ES modules, so serving over `http://` (rather than `file://`) is
-> recommended for reliable module loading.
+> از ES module استفاده می‌کنه، برای همین بهتره روی `http://` سرو بشه تا `file://` که ماژول‌ها مطمئن‌تر لود بشن.
 
-## File structure
+## چی به چیه
 
 ```
-index.html          – markup + font links; loads styles.css and js/main.js
-styles.css          – all styling
+index.html          – مارک‌آپ و لینک فونت‌ها؛ styles.css و js/main.js رو لود می‌کنه
+styles.css          – همه‌ی استایل‌ها
 js/
-  mood.js           – emotion lexicon, mode/scale tables, detectMood, hashing
-  audio-engine.js   – seeded RNG, 22 voices, reverb, punctuation, ambient engine
-  main.js           – UI wiring, tokenizer, playback loop, save/export, keybindings
+  mood.js           – فرهنگ لغت احساسی، جدول گام‌ها، detectMood، هش کردن
+  audio-engine.js   – RNG با seed، ۲۲ صدا، ریورب، نقطه‌گذاری، موتور آمبینت
+  main.js           – سیم‌کشی UI، توکنایزر، حلقه‌ی پخش، ذخیره/خروجی، کلیدهای میان‌بر
 ```
 
-## Keyboard shortcuts
+## کلیدهای میان‌بر
 
-- `⇧ + Enter` — play
-- `Esc` — stop
-- `⌘ + S` — save the recording
+- `⇧ + Enter` — پخش
+- `Esc` — توقف
+- `⌘ + S` — ذخیره‌ی ضبط
 
-## License
+## لایسنس
 
-MIT — see [LICENSE](LICENSE).
+MIT — به [LICENSE](LICENSE) نگاه کن.
