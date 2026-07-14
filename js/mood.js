@@ -478,6 +478,54 @@ export function detectMood(text) {
   return { mode: MODE_ORDER[idx], normScore: norm, tenseScore: tenseNorm };
 }
 
+// ── Text signal layer ─────────────────────────────────────────
+// Beyond a single mood, extract several independent signals from the text so
+// that different atmospheric sound layers can each be tied to the aspect of the
+// writing they belong to (drone→darkness, crackle→nostalgia, hiss→tension, …).
+// All signals are normalized 0..1 and derived deterministically from the text.
+//
+// Returns:
+//   mode        — the chosen musical mode (same as detectMood)
+//   darkness    — 0 bright .. 1 dark (where the mood sits in MODE_ORDER)
+//   tension     — 0 calm .. 1 tense/unstable (anger/fear/exclamation)
+//   nostalgia   — 0 .. 1 how much the text evokes memory/the past
+//   density     — 0 .. 1 how emotionally saturated the text is (emotion words / total)
+//   valence     — signed mood score (negative = dark, positive = bright)
+export function analyzeText(text) {
+  const m = detectMood(text);
+  const lower = normalizePersian(text.toLowerCase());
+  const words = lower.match(/[a-zA-Z’'ا-یآ‌]+/g) || [];
+  const toks = words.map(w => w.replace(/’/g, "'"));
+  const n = Math.max(1, toks.length);
+
+  // darkness from mode position (MODE_ORDER runs dark → bright)
+  const mi = MODE_ORDER.indexOf(m.mode);
+  const darkness = mi < 0 ? 0.5 : 1 - (mi / (MODE_ORDER.length - 1));
+
+  // tension straight from the detector, squashed into 0..1
+  const tension = Math.max(0, Math.min(1, m.tenseScore));
+
+  // nostalgia: fraction of tokens that are nostalgia-category words
+  const nostalgiaWords = new Set(EMOTION_LEXICON.nostalgia.words);
+  let nostalgiaHits = 0, emotionHits = 0;
+  for (const w of toks) {
+    const base = w; // already normalized
+    if (nostalgiaWords.has(base)) nostalgiaHits++;
+    if (WORD_LOOKUP[base]) emotionHits++;
+  }
+  const nostalgia = Math.max(0, Math.min(1, (nostalgiaHits / n) * 6)); // scaled — even a little memory reads
+  const density  = Math.max(0, Math.min(1, emotionHits / n));
+
+  return {
+    mode: m.mode,
+    valence: m.normScore,
+    darkness,
+    tension,
+    nostalgia,
+    density,
+  };
+}
+
 // Root candidates — two octave layers so dark moods can go lower, bright moods higher
 export function noteFreq(semisFromA2) { return 110.00 * Math.pow(2, semisFromA2 / 12); }
 // A1 through G#2 (low register) + A2 through G#3 (mid register) = 24 roots

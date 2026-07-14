@@ -1,6 +1,6 @@
 import { hashText } from './mood.js';
 import {
-  ac, seedRng, VOICES,
+  ac, seedRng, VOICES, playPannedVoice,
   ensureReverb, playPunctuation, deriveTextHarmony,
   startAmbient, clearAmb, wordNoteScale,
   setStopping, isStopping, setAmbientDensity, getAmbientDensity, resetReverb,
@@ -183,12 +183,23 @@ async function play() {
     setAmbientDensity(tok.paraPos === 'start' ? 0.55 : tok.paraPos === 'end' ? 1.35 : 1);
 
     const freq = pick(wordNoteScale());
-    const vol  = rnd(0.18, 0.52);
+    let vol    = rnd(0.18, 0.52);
     const dur  = rnd(0.22, 0.45);
+
+    // (6) breathing dynamics — a slow volume swell/ebb across the sentence so the
+    // reading rises and falls like a spoken phrase instead of staying flat. A gentle
+    // sine over the words, plus a small lift toward the denser end of the text.
+    const phraseWave = 0.82 + 0.18 * Math.sin(wordsSeen * 0.5);
+    vol *= phraseWave;
+
+    // (3) stereo drift — successive words wander slowly across the stereo field
+    // (a slow sine), giving spatial depth. Kept within ±0.6 so it never feels
+    // hard-panned, just "wide". Deterministic (position-based).
+    const pan = Math.sin(wordsSeen * 0.37) * 0.6;
 
     // shift voice within the sentence's appropriate group for variety
     if (randUnit() < 0.4) voiceIdx = pick(group);
-    VOICES[voiceIdx](freq, vol, dur, dests);
+    playPannedVoice(voiceIdx, freq, vol, dur, dests, pan);
     animBars(vol);
 
     // reading pace: longer words get more time

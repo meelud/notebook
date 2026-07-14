@@ -1,4 +1,4 @@
-import { buildScale, detectMood, hashText, ROOT_CANDIDATES_LOW, ROOT_CANDIDATES_MID, chordFromScale, MODE_ORDER } from './mood.js';
+import { buildScale, detectMood, analyzeText, hashText, ROOT_CANDIDATES_LOW, ROOT_CANDIDATES_MID, chordFromScale, MODE_ORDER } from './mood.js';
 
 // ── Audio Engine ─────────────────────────────────────────────
 // All shared audio state (AudioContext, reverb, RNG cursor, current
@@ -10,6 +10,7 @@ let AC = null;
 let stopping = false;
 
 let ambTimers = [];
+let droneStops = []; // long-lived drone oscillators/LFOs, stopped in clearAmb
 let reverbNode = null, reverbSend = null;
 
 export function ac() {
@@ -39,6 +40,23 @@ export function pick(a)   { return a[Math.floor(_rand() * a.length)]; }
 // them) so there's no temporal-dead-zone fragility. Set by deriveTextHarmony().
 let currentScale = buildScale(110.00, 'minor');
 let currentMood = 'minor';
+
+// Per-text signals (from analyzeText) that drive the atmospheric layers below.
+// Each new sound layer is tied to the signal it belongs to:
+//   drone   → darkness   (weight & depth of the piece)
+//   crackle → nostalgia  (memory / the past → vinyl dust)
+//   hiss    → tension    (unease → restless air/noise)
+let sig = { darkness: 0.5, tension: 0, nostalgia: 0, density: 0, valence: 0 };
+
+// Darkness of the current mood on a 0..1 scale (0 = brightest mode, 1 = darkest),
+// derived from where the mood sits in MODE_ORDER (which runs dark → bright).
+// This is the single knob that drives the atmospheric dynamics below —
+// keeping everything tied to the text's feeling without changing any timbre.
+function moodDarkness() {
+  const i = MODE_ORDER.indexOf(currentMood);
+  if (i < 0) return 0.5;
+  return 1 - (i / (MODE_ORDER.length - 1)); // index 0 = darkest → 1.0
+}
 
 // Word-note palette is built per-text from currentScale (set by deriveTextHarmony),
 // spread across octaves that match the mood's register:
@@ -507,6 +525,9 @@ export function deriveTextHarmony(text) {
 
   currentMood = mode;
   currentScale = buildScale(root, mode);
+  // capture the full signal set so the atmospheric layers can each track the
+  // aspect of the text they belong to
+  sig = analyzeText(text);
   return { mood: mode, root, scale: currentScale };
 }
 
@@ -519,6 +540,9 @@ export function clearAmb() {
   ambTimers.forEach(id => clearTimeout(id));
   ambTimers = [];
   clockRunning = false;
+  // fade & stop the long-lived deep drone (if any)
+  droneStops.forEach(node => { try { node.stop(); } catch (e) {} });
+  droneStops = [];
 }
 
 let ambientDensity = 1; // 0.55 = sparse/start, 1 = normal/middle, 1.35 = dense/end
@@ -537,14 +561,37 @@ export function startAmbient(dests) {
   clockRunning = true;
   let beat = 0;       // global beat counter
   let lastDegree = null;
+  droneStops.length = 0; // reset the drone node list for this run
+
+  // Effective beat length: darker text breathes slower (Burial-esque drag),
+  // brighter text moves a touch quicker — a gentle ±15% around BEAT_SEC, never
+  // a jarring tempo change. Computed live so it tracks the mood of the text.
+  function beatDur() {
+    const d = moodDarkness();            // 0 bright .. 1 dark
+    return BEAT_SEC * (1 + d * 0.18 - (1 - d) * 0.06);
+  }
 
   // ---- warm pad: holds the current chord, crossfades into the next ----
   function playChord(freqs, dur) {
     const detunes = [-7, 7, 0, 4];
+    // darker moods sit behind a lower, more closed filter (Hecker's veiled pads);
+    // brighter moods open up a little. Base cutoff moves with darkness.
+    const baseCutoff = 1400 - moodDarkness() * 700; // ~700Hz dark .. ~1400Hz bright
     freqs.forEach((f, idx) => {
       const type = idx === 0 ? 'sine' : (idx % 2 === 0 ? 'sine' : 'sawtooth');
       const osc = c.createOscillator(), g = c.createGain();
-      const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1200; lp.Q.value = 0.4;
+      const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = baseCutoff; lp.Q.value = 0.4;
+
+      // slow filter "breathing" — a gentle LFO opens/closes the cutoff over the
+      // life of the pad, giving the analog, living texture of Hecker/Daft pads
+      // without altering the underlying tone. Rate/depth are subtle & deterministic.
+      const lfo = c.createOscillator(), lfoGain = c.createGain();
+      lfo.type = 'sine';
+      lfo.frequency.value = rnd(0.04, 0.09); // very slow — one breath every ~11-25s
+      lfoGain.gain.value = baseCutoff * 0.35;
+      lfo.connect(lfoGain); lfoGain.connect(lp.frequency);
+      lfo.start(); lfo.stop(c.currentTime + dur + 0.1);
+
       osc.type = type; osc.frequency.value = f; osc.detune.value = detunes[idx % detunes.length];
       const peak = (idx === 0 ? 0.085 : 0.05) * ambientDensity;
       const attack = dur * 0.35;
@@ -564,7 +611,7 @@ export function startAmbient(dests) {
     const osc = c.createOscillator(), g = c.createGain();
     const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 180;
     osc.type = 'sine'; osc.frequency.value = 55;
-    const dur = BEAT_SEC * 0.8;
+    const dur = beatDur() * 0.8;
     g.gain.setValueAtTime(0, c.currentTime);
     g.gain.linearRampToValueAtTime(0.09 * ambientDensity, c.currentTime + 0.04);
     g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur);
@@ -575,11 +622,14 @@ export function startAmbient(dests) {
 
   // ---- sparse motif note, quantized to the beat grid, drawn from current chord's scale ----
   function playMotifNote() {
-    const f = pick(currentScale) * 2; // octave up from the pad register, into a singing range
+    // darker moods keep the motif lower & more veiled (Burial's sunken melodies),
+    // brighter moods let it ring an octave up in a clearer register.
+    const octave = moodDarkness() > 0.6 ? 1 : 2;
+    const f = pick(currentScale) * octave;
     const osc = c.createOscillator(), g = c.createGain();
-    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2000;
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2000 - moodDarkness() * 900;
     osc.type = 'sine'; osc.frequency.value = f;
-    const dur = BEAT_SEC * rnd(1.4, 2.2);
+    const dur = beatDur() * rnd(1.4, 2.2);
     g.gain.setValueAtTime(0, c.currentTime);
     g.gain.linearRampToValueAtTime(rnd(0.03, 0.055) * ambientDensity, c.currentTime + 0.12);
     g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur);
@@ -606,11 +656,105 @@ export function startAmbient(dests) {
     src.start();
   }
 
+  // ════════════════════════════════════════════════════════════
+  //  NEW atmospheric layers — each tied to a TEXT SIGNAL, so the
+  //  soundstage grows out of what's written. No existing timbre is
+  //  changed; these are additive background textures in the same
+  //  Hecker / Burial / Daft-Punk space.
+  // ════════════════════════════════════════════════════════════
+
+  // (A) DEEP DRONE ← darkness. A sub-register sustained pad, one octave below
+  //     the root, that gives the piece its "belly". The darker the text, the
+  //     louder, lower, and more present the drone. Bright text ≈ silent.
+  let droneNode = null;
+  function startDrone() {
+    if (sig.darkness < 0.25) return; // bright text: no drone at all
+    const rootHz = currentScale[0] * 0.5; // an octave below the tonic
+    const master = c.createGain();
+    master.gain.value = 0;
+    const target = 0.05 + sig.darkness * 0.10; // 0.05..0.15 by darkness
+    master.gain.linearRampToValueAtTime(target, c.currentTime + 4);
+    // two slightly detuned low oscillators through a very low lowpass = warm sub drone
+    [-4, 4].forEach(det => {
+      const osc = c.createOscillator();
+      const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 220 - sig.darkness * 90;
+      osc.type = 'sawtooth'; osc.frequency.value = rootHz; osc.detune.value = det;
+      // slow "breathing" of the drone's filter
+      const lfo = c.createOscillator(), lfoGain = c.createGain();
+      lfo.type = 'sine'; lfo.frequency.value = rnd(0.03, 0.07); lfoGain.gain.value = 40;
+      lfo.connect(lfoGain); lfoGain.connect(lp.frequency);
+      osc.connect(lp); lp.connect(master);
+      lfo.start(); osc.start();
+      droneStops.push(osc, lfo);
+    });
+    // a quiet pure sub-sine an octave lower still, for weight
+    const sub = c.createOscillator(), subG = c.createGain();
+    sub.type = 'sine'; sub.frequency.value = rootHz * 0.5;
+    subG.gain.value = target * 0.6;
+    sub.connect(subG); subG.connect(master);
+    sub.start(); droneStops.push(sub);
+
+    master.connect(reverbNode);
+    dests.forEach(d => master.connect(d));
+    droneNode = master;
+  }
+
+  // (B) VINYL CRACKLE ← nostalgia (+ a little darkness). Sparse dust/pops and a
+  //     faint continuous crackle bed — the memory/old-recording feel of Burial.
+  //     Fires occasionally; probability scales with nostalgia.
+  function playCrackle() {
+    const amount = sig.nostalgia * 0.8 + sig.darkness * 0.15;
+    if (amount < 0.05) return;
+    const dur = rnd(0.4, 1.1);
+    const buf = c.createBuffer(1, Math.ceil(c.sampleRate * dur), c.sampleRate);
+    const d = buf.getChannelData(0);
+    // mostly silence with occasional sharp specks = crackle, not hiss
+    for (let j = 0; j < d.length; j++) {
+      d[j] = (_rand() < 0.004) ? (_rand() * 2 - 1) * (0.5 + _rand() * 0.5) : 0;
+    }
+    const src = c.createBufferSource(); src.buffer = buf;
+    const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 1500;
+    const g = c.createGain(); g.gain.value = 0.10 * amount;
+    src.connect(hp); hp.connect(g);
+    dests.forEach(dd => g.connect(dd));
+    src.start();
+  }
+
+  // (C) TAPE HISS / AIR ← tension. A soft filtered pink-ish noise bed whose level
+  //     and restlessness rise with the text's tension/unease. Calm text ≈ silent.
+  function playHiss(dur) {
+    const amount = sig.tension;
+    if (amount < 0.08) return;
+    const buf = c.createBuffer(1, Math.ceil(c.sampleRate * dur), c.sampleRate);
+    const d = buf.getChannelData(0);
+    let last = 0;
+    for (let j = 0; j < d.length; j++) {
+      // simple lowpassed noise → soft "air" rather than white static
+      const white = _rand() * 2 - 1;
+      last = last * 0.96 + white * 0.04;
+      d[j] = last * 3;
+    }
+    const src = c.createBufferSource(); src.buffer = buf;
+    const bp = c.createBiquadFilter(); bp.type = 'bandpass';
+    bp.frequency.value = 2000 + amount * 3000; bp.Q.value = 0.4;
+    const g = c.createGain();
+    const peak = 0.012 * amount;
+    const a = dur * 0.3, r = dur * 0.3;
+    g.gain.setValueAtTime(0, c.currentTime);
+    g.gain.linearRampToValueAtTime(peak, c.currentTime + a);
+    g.gain.setValueAtTime(peak, c.currentTime + dur - r);
+    g.gain.linearRampToValueAtTime(0, c.currentTime + dur);
+    src.connect(bp); bp.connect(g);
+    dests.forEach(dd => g.connect(dd));
+    src.start();
+  }
+
   // ---- the shared clock: one bar = 4 beats, chord changes every bar ----
   function tick() {
     if (stopping || !clockRunning) return;
     const beatInBar = beat % BAR_BEATS;
-    const barDur = BEAT_SEC * BAR_BEATS;
+    const thisBeat = beatDur();
+    const barDur = thisBeat * BAR_BEATS;
 
     if (beatInBar === 0) {
       // new bar — drift to a new (different) scale degree within currentScale,
@@ -620,6 +764,7 @@ export function startAmbient(dests) {
       lastDegree = degree;
       playChord(chordFromScale(currentScale, degree), barDur * 1.15); // slightly longer than the bar so it crossfades into the next
       playTapeWarmth(barDur * 1.1);
+      playHiss(barDur * 1.1);   // tension-driven air bed, renewed each bar
     }
 
     // pulse on beats 0 and 2 (the "1 and 3")
@@ -630,11 +775,34 @@ export function startAmbient(dests) {
       playMotifNote();
     }
 
+    // vinyl crackle — nostalgia-driven, sparse & random across the bar (Burial dust)
+    if (_rand() < 0.5 * (sig.nostalgia * 0.8 + sig.darkness * 0.15)) {
+      playCrackle();
+    }
+
     beat++;
-    ambTimers.push(setTimeout(tick, BEAT_SEC * 1000));
+    // micro-timing jitter — a subtle human/tape drift (Burial's loose swing),
+    // scaled by darkness so tense/dark pieces feel slightly less mechanical.
+    // Deterministic (uses the seeded RNG), so a given text still replays identically.
+    const jitter = 1 + (_rand() - 0.5) * 0.06 * (0.5 + moodDarkness());
+    ambTimers.push(setTimeout(tick, thisBeat * jitter * 1000));
   }
 
+  startDrone(); // darkness-driven sub drone runs under the whole piece
   tick();
+}
+
+// Play a word's voice through a per-note stereo panner, so successive words
+// drift gently across the stereo field (adds spatial depth without touching any
+// timbre). `pan` is -1..1. The panner sits between the voice and the real
+// destinations; the voice itself is unchanged — it just connects to the panner.
+export function playPannedVoice(voiceIdx, freq, vol, dur, dests, pan) {
+  const c = ac();
+  const panner = c.createStereoPanner();
+  panner.pan.value = Math.max(-1, Math.min(1, pan));
+  panner.connect(dests[0]);          // to speakers
+  for (let i = 1; i < dests.length; i++) panner.connect(dests[i]); // to recorder etc.
+  VOICES[voiceIdx](freq, vol, dur, [panner]);
 }
 
 // ── State accessors for main.js (no logic change — just module boundary wrappers) ──
