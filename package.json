@@ -1,0 +1,12 @@
+{
+  "name": "notebook",
+  "version": "1.0.0",
+  "description": "Turn any text into a piece of generative ambient music, synthesized live in the browser.",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test",
+    "test:update": "UPDATE_SNAPSHOTS=1 node --test",
+    "serve": "python3 -m http.server"
+  }
+}
