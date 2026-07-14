@@ -622,20 +622,35 @@ export function startAmbient(dests) {
 
   // ---- sparse motif note, quantized to the beat grid, drawn from current chord's scale ----
   function playMotifNote() {
-    // darker moods keep the motif lower & more veiled (Burial's sunken melodies),
-    // brighter moods let it ring an octave up in a clearer register.
-    const octave = moodDarkness() > 0.6 ? 1 : 2;
+    // The motif is the "singing" voice of the piece — a clear, forward melodic
+    // note in a bright register (this is what gave the old version its lively,
+    // Toby-Fox-ish character, present even in sad pieces). It rings an octave up
+    // (two for brighter text), stays fairly open in the filter so it's clearly
+    // heard, and has a quick, defined attack so it feels melodic and alive rather
+    // than a veiled pad. Darker text just lowers it slightly & softens — never buries it.
+    const octave = moodDarkness() > 0.7 ? 2 : 3;
     const f = pick(currentScale) * octave;
     const osc = c.createOscillator(), g = c.createGain();
-    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2000 - moodDarkness() * 900;
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 3200 - moodDarkness() * 800;
+    // a tiny bit of triangle-ish body via a second quiet octave for a "voiced" tone
+    const osc2 = c.createOscillator(), g2 = c.createGain();
     osc.type = 'sine'; osc.frequency.value = f;
-    const dur = beatDur() * rnd(1.4, 2.2);
+    osc2.type = 'triangle'; osc2.frequency.value = f * 2;
+    // sometimes a short, plucky note, sometimes a longer sustain — melodic phrasing
+    const short = _rand() < 0.5;
+    const dur = short ? beatDur() * rnd(0.5, 0.9) : beatDur() * rnd(1.4, 2.2);
+    const peak = rnd(0.06, 0.10) * ambientDensity; // louder & more present than before
     g.gain.setValueAtTime(0, c.currentTime);
-    g.gain.linearRampToValueAtTime(rnd(0.03, 0.055) * ambientDensity, c.currentTime + 0.12);
+    g.gain.linearRampToValueAtTime(peak, c.currentTime + (short ? 0.02 : 0.08));
     g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur);
+    g2.gain.setValueAtTime(0, c.currentTime);
+    g2.gain.linearRampToValueAtTime(peak * 0.18, c.currentTime + 0.03);
+    g2.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur * 0.7);
     osc.connect(lp); lp.connect(g);
     g.connect(reverbNode); dests.forEach(d => g.connect(d));
+    osc2.connect(g2); g2.connect(reverbNode); dests.forEach(d => g2.connect(d));
     osc.start(); osc.stop(c.currentTime + dur + 0.1);
+    osc2.start(); osc2.stop(c.currentTime + dur * 0.7 + 0.1);
   }
 
   // ---- gentle tape warmth bed, slow and continuous, tied to bar length ----
@@ -774,9 +789,14 @@ export function startAmbient(dests) {
     // pulse on beats 0 and 2 (the "1 and 3")
     if (beatInBar === 0 || beatInBar === 2) playPulse();
 
-    // motif notes: sparse, mostly on off-beats, density-gated
-    if (_rand() < 0.32 * ambientDensity && (beatInBar === 1 || beatInBar === 3)) {
+    // motif notes: the melodic voice. Play more often (brighter text = more
+    // melodic activity) and allow notes on any beat, so a clear, lively tune
+    // emerges rather than the odd isolated tone. Brighter → busier & more singing.
+    const motifChance = (0.42 + (1 - moodDarkness()) * 0.28) * ambientDensity;
+    if (_rand() < motifChance) {
       playMotifNote();
+      // occasionally a quick answering note right after — a little melodic phrase
+      if (_rand() < 0.3) ambTimers.push(setTimeout(() => { if (!stopping && clockRunning) playMotifNote(); }, thisBeat * 500));
     }
 
     // vinyl crackle — nostalgia-driven, sparse & random across the bar (Burial dust)
