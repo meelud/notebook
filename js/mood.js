@@ -295,6 +295,145 @@ export const INTENSIFIERS = {
   'تاحدی': 0.65, 'نسبتا': 0.7, 'نسبتاً': 0.7, 'اندکی': 0.5,
 };
 
+// ── Phrase layer (EN + FA) ────────────────────────────────────
+// Multi-word expressions whose meaning is NOT the sum of their words. Two kinds:
+//   • intensify:N  → multiply/boost the sentence's DOMINANT emotion by N
+//     (e.g. "to death" after "love" → love ×; after "scared" → fear ×).
+//     These carry no polarity of their own — they amplify whatever the piece
+//     already feels, so "I love you to death" is *more* loving, not dark.
+//   • weight/tense → a fixed emotional contribution (e.g. "madly in love").
+// Phrases are matched on the normalized text BEFORE word-by-word analysis, so a
+// word like "death" inside "love you to death" is consumed by the phrase and
+// never counted as its own dark word.
+export const PHRASES = [
+  // ── pure intensifiers of the dominant emotion (EN) ──
+  { p: 'to death', intensify: 1.9 },
+  { p: 'to bits', intensify: 1.6 },
+  { p: 'to pieces', intensify: 1.6 },
+  { p: 'to the moon and back', intensify: 2.0 },
+  { p: 'more than anything', intensify: 1.9 },
+  { p: 'more than words', intensify: 1.9 },
+  { p: 'beyond words', intensify: 1.9 },
+  { p: 'beyond belief', intensify: 1.8 },
+  { p: 'beyond measure', intensify: 1.9 },
+  { p: 'with all my heart', intensify: 1.9 },
+  { p: 'from the bottom of my heart', intensify: 1.9 },
+  { p: 'more and more', intensify: 1.5 },
+  { p: 'so much', intensify: 1.6 },
+  { p: 'so so much', intensify: 1.9 },
+  { p: 'like crazy', intensify: 1.8 },
+  { p: 'like mad', intensify: 1.8 },
+  { p: 'like never before', intensify: 1.7 },
+  { p: 'once and for all', intensify: 1.5 },
+  { p: 'head over heels', intensify: 1.9 },
+  { p: 'with every fiber', intensify: 1.9 },
+  { p: 'to the core', intensify: 1.7 },
+  { p: 'out of my mind', intensify: 1.7 },
+  { p: 'beyond repair', intensify: 1.7 },
+  { p: 'for good', intensify: 1.3 },
+  { p: 'for ever', intensify: 1.5 },
+  { p: 'for eternity', intensify: 1.8 },
+  { p: 'till the end', intensify: 1.7 },
+  { p: 'until the end', intensify: 1.7 },
+  { p: 'no matter what', intensify: 1.6 },
+
+  // ── phrases with their OWN strong emotion (EN) ──
+  { p: 'madly in love', weight: 1.9, tense: 0 },
+  { p: 'deeply in love', weight: 1.9, tense: 0 },
+  { p: 'head over heels in love', weight: 2.0, tense: 0 },
+  { p: 'falling in love', weight: 1.5, tense: 0.1 },
+  { p: 'love of my life', weight: 2.0, tense: 0 },
+  { p: 'i love you', weight: 1.4, tense: 0 },
+  { p: 'i adore you', weight: 1.6, tense: 0 },
+  { p: 'miss you so much', weight: -0.6, tense: 0.2 },   // longing: bittersweet
+  { p: 'miss you', weight: -0.4, tense: 0.15 },
+  { p: 'scared to death', weight: -1.4, tense: 1.0 },
+  { p: 'frightened to death', weight: -1.4, tense: 1.0 },
+  { p: 'worried sick', weight: -1.1, tense: 0.8 },
+  { p: 'sick to my stomach', weight: -1.1, tense: 0.7 },
+  { p: 'on top of the world', weight: 1.8, tense: 0 },
+  { p: 'over the moon', weight: 1.8, tense: 0 },
+  { p: 'walking on air', weight: 1.7, tense: 0 },
+  { p: 'on cloud nine', weight: 1.8, tense: 0 },
+  { p: 'break my heart', weight: -1.5, tense: 0.4 },
+  { p: 'broke my heart', weight: -1.5, tense: 0.4 },
+  { p: 'broken heart', weight: -1.4, tense: 0.3 },
+  { p: 'heart broke', weight: -1.4, tense: 0.4 },
+  { p: 'tears in my eyes', weight: -1.0, tense: 0.2 },
+  { p: 'lost my mind', weight: -0.8, tense: 0.9 },
+  { p: 'losing my mind', weight: -0.8, tense: 0.9 },
+  { p: 'fed up', weight: -0.8, tense: 0.7 },
+  { p: 'sick and tired', weight: -0.9, tense: 0.6 },
+  { p: 'can not take it anymore', weight: -1.2, tense: 0.9 },
+  { p: 'cannot take it anymore', weight: -1.2, tense: 0.9 },
+  { p: 'the end of the world', weight: -1.3, tense: 0.6 },
+  { p: 'light of my life', weight: 1.7, tense: 0 },
+  { p: 'gave up', weight: -1.0, tense: 0.3 },
+  { p: 'giving up', weight: -1.0, tense: 0.4 },
+  { p: 'let down', weight: -0.8, tense: 0.3 },
+  { p: 'at peace', weight: 0.8, tense: -0.4 },
+  { p: 'at ease', weight: 0.7, tense: -0.4 },
+  { p: 'a long time ago', weight: -0.2, tense: -0.1, nostalgia: true },
+  { p: 'those days', weight: -0.2, tense: 0, nostalgia: true },
+  { p: 'the good old days', weight: 0.2, tense: -0.1, nostalgia: true },
+  { p: 'back then', weight: -0.2, tense: 0, nostalgia: true },
+  { p: 'used to be', weight: -0.2, tense: 0, nostalgia: true },
+  { p: 'once upon a time', weight: 0, tense: 0, nostalgia: true },
+
+  // ── pure intensifiers (FA) ──
+  { p: 'تا حد مرگ', intensify: 1.9 },
+  { p: 'تا سر حد مرگ', intensify: 1.9 },
+  { p: 'تا پای مرگ', intensify: 1.9 },
+  { p: 'با تمام وجود', intensify: 1.9 },
+  { p: 'با تمام وجودم', intensify: 1.9 },
+  { p: 'از ته دل', intensify: 1.8 },
+  { p: 'از صمیم قلب', intensify: 1.9 },
+  { p: 'بیش از حد', intensify: 1.6 },
+  { p: 'بیش از اندازه', intensify: 1.7 },
+  { p: 'بیشتر از هر چیزی', intensify: 1.9 },
+  { p: 'بیشتر از همه چیز', intensify: 1.9 },
+  { p: 'تا ابد', intensify: 1.7 },
+  { p: 'برای همیشه', intensify: 1.6 },
+  { p: 'خیلی خیلی', intensify: 1.9 },
+  { p: 'بی نهایت', intensify: 2.0 },
+  { p: 'به شدت', intensify: 1.8 },
+  { p: 'حسابی', intensify: 1.5 },
+  { p: 'دیوانه وار', intensify: 1.9 },
+  { p: 'مثل دیوونه', intensify: 1.8 },
+  { p: 'هر چقدر', intensify: 1.4 },
+
+  // ── phrases with their OWN emotion (FA) ──
+  { p: 'عاشقتم', weight: 1.6, tense: 0 },
+  { p: 'دوستت دارم', weight: 1.4, tense: 0 },
+  { p: 'عاشقانه دوستت دارم', weight: 2.0, tense: 0 },
+  { p: 'دیوانه وار عاشقتم', weight: 2.0, tense: 0 },
+  { p: 'دلم برات تنگ شده', weight: -0.5, tense: 0.2 },
+  { p: 'دلتنگتم', weight: -0.5, tense: 0.2 },
+  { p: 'دلم گرفته', weight: -1.0, tense: 0.2 },
+  { p: 'دلم شکست', weight: -1.5, tense: 0.4 },
+  { p: 'قلبم شکست', weight: -1.5, tense: 0.4 },
+  { p: 'دل شکسته', weight: -1.4, tense: 0.3 },
+  { p: 'اشک تو چشمام', weight: -1.0, tense: 0.2 },
+  { p: 'از ترس مردم', weight: -1.4, tense: 1.0 },
+  { p: 'ترسیدم تا حد مرگ', weight: -1.4, tense: 1.0 },
+  { p: 'دیگه نمیتونم', weight: -1.2, tense: 0.9 },
+  { p: 'دیگه طاقت ندارم', weight: -1.2, tense: 0.9 },
+  { p: 'خسته شدم', weight: -0.9, tense: 0.5 },
+  { p: 'ته دنیا', weight: -1.2, tense: 0.6 },
+  { p: 'رو ابرا', weight: 1.7, tense: 0 },
+  { p: 'دنیا مال منه', weight: 1.8, tense: 0 },
+  { p: 'خوشحال ترین آدم', weight: 1.9, tense: 0 },
+  { p: 'یاد گذشته', weight: -0.2, tense: 0, nostalgia: true },
+  { p: 'اون روزا', weight: -0.2, tense: 0, nostalgia: true },
+  { p: 'روزای قدیم', weight: 0.1, tense: -0.1, nostalgia: true },
+  { p: 'زمان قدیم', weight: 0.1, tense: -0.1, nostalgia: true },
+  { p: 'یه زمانی', weight: -0.1, tense: 0, nostalgia: true },
+];
+
+// Sort phrases longest-first so we match the most specific expression before its
+// shorter substrings (e.g. "head over heels in love" before "head over heels").
+const PHRASES_SORTED = [...PHRASES].sort((a, b) => b.p.length - a.p.length);
+
 // How many following words a negator/intensifier reaches over.
 const MODIFIER_SCOPE = 3;
 
@@ -377,8 +516,33 @@ function normalizePersian(s) {
 }
 
 export function detectMood(text) {
-  const lower = normalizePersian(text.toLowerCase());
-  // keep apostrophes so contracted negators like "don't"/"can't" survive tokenizing
+  let lower = normalizePersian(text.toLowerCase()).replace(/’/g, "'");
+
+  // ── Phrase pass (runs FIRST) ──────────────────────────────────
+  // Detect multi-word expressions before splitting into words, so the SENTENCE's
+  // combined meaning is captured — not just isolated words. Matched phrases are
+  // removed from the text so their component words aren't double-counted, and:
+  //   • fixed-emotion phrases add their weight/tense directly
+  //   • intensify phrases are stored and applied to the dominant emotion at the end
+  let phraseScore = 0, phraseTense = 0, phraseNostalgia = false;
+  const pendingIntensify = [];
+  for (const ph of PHRASES_SORTED) {
+    let idx;
+    // match on word boundaries within the (space-padded) text
+    const padded = ' ' + lower + ' ';
+    if (padded.includes(' ' + ph.p + ' ')) {
+      // remove ALL occurrences of the phrase from the working text
+      lower = (' ' + lower + ' ').split(' ' + ph.p + ' ').join('  ').trim().replace(/\s+/g, ' ');
+      if (ph.intensify !== undefined) {
+        pendingIntensify.push(ph.intensify);
+      } else {
+        phraseScore += ph.weight || 0;
+        phraseTense += ph.tense || 0;
+        if (ph.nostalgia) phraseNostalgia = true;
+      }
+    }
+  }
+
   const words = lower.match(/[a-zA-Z’'ا-یآ‌]+/g) || [];
 
   // Normalize curly apostrophes up front.
@@ -456,6 +620,18 @@ export function detectMood(text) {
     tense += wTense;
   }
 
+  // fold in the fixed-emotion phrases detected up front
+  score += phraseScore;
+  tense += phraseTense;
+
+  // Apply phrase intensifiers to the DOMINANT emotion: they amplify whatever the
+  // sentence already feels (e.g. "to death" makes "love" MORE loving, "scared"
+  // MORE scared) rather than introducing their own polarity.
+  for (const factor of pendingIntensify) {
+    score *= factor;
+    tense *= factor;
+  }
+
   const exclaim  = (text.match(/!/g) || []).length;
   const question = (text.match(/\?/g) || []).length;
   const ellipsis = (text.match(/\.\.\./g) || []).length;
@@ -468,8 +644,11 @@ export function detectMood(text) {
   const tenseNorm = tense / Math.max(3, Math.sqrt(words.length));
 
   // How much emotional signal is actually present (not just neutral filler words).
+  // Phrases count too, so a sentence like "i love you to death" is never treated
+  // as neutral even though its remaining loose words might be.
   const emotionHits = entry.reduce((a, e) => a + (e ? 1 : 0), 0);
-  const emotionDensity = emotionHits / Math.max(1, words.length);
+  const hadPhrase = phraseScore !== 0 || phraseTense !== 0 || pendingIntensify.length > 0 || phraseNostalgia;
+  const emotionDensity = hadPhrase ? 1 : emotionHits / Math.max(1, words.length);
 
   let idx;
   if (emotionDensity < 0.12) {
@@ -519,7 +698,8 @@ export function analyzeText(text) {
   // tension straight from the detector, squashed into 0..1
   const tension = Math.max(0, Math.min(1, m.tenseScore));
 
-  // nostalgia: fraction of tokens that are nostalgia-category words
+  // nostalgia: fraction of tokens that are nostalgia-category words,
+  // plus a boost if a nostalgia PHRASE ("those days", "یاد گذشته", …) is present.
   const nostalgiaWords = new Set(EMOTION_LEXICON.nostalgia.words);
   let nostalgiaHits = 0, emotionHits = 0;
   for (const w of toks) {
@@ -527,7 +707,10 @@ export function analyzeText(text) {
     if (nostalgiaWords.has(base)) nostalgiaHits++;
     if (WORD_LOOKUP[base]) emotionHits++;
   }
-  const nostalgia = Math.max(0, Math.min(1, (nostalgiaHits / n) * 6)); // scaled — even a little memory reads
+  const padded = ' ' + lower.replace(/’/g, "'") + ' ';
+  const phraseNostalgia = PHRASES.some(ph => ph.nostalgia && padded.includes(' ' + ph.p + ' '));
+  let nostalgia = Math.max(0, Math.min(1, (nostalgiaHits / n) * 6)); // scaled — even a little memory reads
+  if (phraseNostalgia) nostalgia = Math.max(nostalgia, 0.7);
   const density  = Math.max(0, Math.min(1, emotionHits / n));
 
   return {
