@@ -642,16 +642,20 @@ export function startAmbient(dests) {
   function playMotifNote() {
     const f = pick(currentScale) * 2; // one octave up — warm, singing register
     const osc = c.createOscillator(), g = c.createGain();
-    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2000 - moodDarkness() * 400;
+    // slightly softer filter so the note has no sharp edge — rounder, gentler tone
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1500 - moodDarkness() * 400;
     osc.type = 'sine'; osc.frequency.value = f;
-    const dur = beatDur() * rnd(1.4, 2.2); // long, sustained, vocal
+    const dur = beatDur() * rnd(2.2, 3.2); // longer, more sustained — notes linger & sing
     const peak = rnd(0.035, 0.06) * ambientDensity; // soft & gentle, like the original
     g.gain.setValueAtTime(0, c.currentTime);
-    g.gain.linearRampToValueAtTime(peak, c.currentTime + 0.12); // soft slow attack — no plucky bite
-    g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur);
+    // gentle, slow swell instead of a quick onset — removes the "sharp/early" bite
+    g.gain.linearRampToValueAtTime(peak, c.currentTime + 0.30);
+    // hold near-peak a moment, then a long, slow tail so it fades softly (not cut short)
+    g.gain.setValueAtTime(peak, c.currentTime + dur * 0.55);
+    g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur + 0.8);
     osc.connect(lp); lp.connect(g);
     g.connect(reverbNode); dests.forEach(d => g.connect(d));
-    osc.start(); osc.stop(c.currentTime + dur + 0.1);
+    osc.start(); osc.stop(c.currentTime + dur + 1.0);
   }
 
   // ---- gentle tape warmth bed, slow and continuous, tied to bar length ----
