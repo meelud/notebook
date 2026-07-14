@@ -1,4 +1,4 @@
-import { buildScale, detectMood, analyzeText, hashText, ROOT_CANDIDATES_LOW, ROOT_CANDIDATES_MID, chordFromScale, MODE_ORDER } from './mood.js';
+import { buildScale, detectMood, analyzeText, hashText, ROOT_CANDIDATES_LOW, ROOT_CANDIDATES_MID, chordFromScale, MODE_ORDER, CHORD_VOICINGS, buildVoicing } from './mood.js';
 
 // ── Audio Engine ─────────────────────────────────────────────
 // All shared audio state (AudioContext, reverb, RNG cursor, current
@@ -64,11 +64,15 @@ function moodDarkness() {
 export function wordNoteScale() {
   const out = [];
   const modeIdx = MODE_ORDER.indexOf(currentMood);
+  // IMPORTANT: octave multipliers MUST be powers of two. Multiplying a scale
+  // frequency by 2^k transposes it by whole octaves, so it stays exactly on a
+  // note of the scale (in-key). Non-power-of-two factors like 3 or 6 shift by an
+  // octave + a fifth and land OFF the scale — that was the source of off-key notes.
   let octaves;
-  if (modeIdx <= 4)       octaves = [0.5, 1, 2];           // dark — low and heavy
-  else if (modeIdx <= 8)  octaves = [0.5, 1, 2, 3];        // mid — normal range
-  else if (modeIdx <= 12) octaves = [1, 2, 3, 4];          // lighter — higher, wider
-  else                    octaves = [1, 2, 3, 4, 6];       // bright — wide, airy
+  if (modeIdx <= 4)       octaves = [0.5, 1, 2];        // dark — low and heavy
+  else if (modeIdx <= 8)  octaves = [0.5, 1, 2, 4];     // mid — normal range
+  else if (modeIdx <= 12) octaves = [1, 2, 4];          // lighter — higher, wider
+  else                    octaves = [1, 2, 4, 8];       // bright — wide, airy
   octaves.forEach(oct => currentScale.forEach(f => out.push(f * oct)));
   return out;
 }
@@ -553,7 +557,14 @@ const BAR_BEATS = 4;
 
 // scale degree roots to drift between for the pad chords — i, iii, v, vii
 // (kept generic; actual frequencies come from currentScale at play time)
-const CHORD_DEGREES = [0, 2, 4, 6];
+// Stable, consonant scale degrees for the pad progression: i, iv, v, vi.
+// (Avoids iii and vii°, whose triads are unstable/diminished in many modes and
+//  made the harmony lurch when the pad jumped to them.)
+const CHORD_DEGREES = [0, 3, 4, 5];
+// A smooth default progression the pad prefers to walk along, so chord changes
+// feel like motion through a key rather than random leaps. Falls back to a
+// nearest-choice pick when it needs to vary.
+const PROGRESSION = [0, 5, 3, 4]; // i – vi – iv – v (classic, always resolves)
 // motif notes now pulled live from currentScale (octave-shifted), not a fixed list
 
 export function startAmbient(dests) {
@@ -561,6 +572,7 @@ export function startAmbient(dests) {
   clockRunning = true;
   let beat = 0;       // global beat counter
   let lastDegree = null;
+  let progStep = 0;   // position along PROGRESSION for smooth chord motion
   droneStops.length = 0; // reset the drone node list for this run
 
   // Effective beat length: darker text breathes slower (Burial-esque drag),
@@ -620,37 +632,26 @@ export function startAmbient(dests) {
     osc.start(); osc.stop(c.currentTime + dur + 0.05);
   }
 
-  // ---- sparse motif note, quantized to the beat grid, drawn from current chord's scale ----
+  // ---- sparse motif note — the "singing" voice of the piece ----
+  // This is the warm, familiar melodic tone from the original version. The
+  // character came from SIMPLICITY: a single pure sine, one octave up (a warm,
+  // vocal register), a gentle filter, a soft slow attack, and long sustained
+  // notes that "sing". Adding a bright triangle, plucky short notes, and higher
+  // octaves made it thin and cold — so we keep it pure and soft here. In-key is
+  // preserved by using power-of-two octaves only.
   function playMotifNote() {
-    // The motif is the "singing" voice of the piece — a clear, forward melodic
-    // note in a bright register (this is what gave the old version its lively,
-    // Toby-Fox-ish character, present even in sad pieces). It rings an octave up
-    // (two for brighter text), stays fairly open in the filter so it's clearly
-    // heard, and has a quick, defined attack so it feels melodic and alive rather
-    // than a veiled pad. Darker text just lowers it slightly & softens — never buries it.
-    const octave = moodDarkness() > 0.7 ? 2 : 3;
-    const f = pick(currentScale) * octave;
+    const f = pick(currentScale) * 2; // one octave up — warm, singing register
     const osc = c.createOscillator(), g = c.createGain();
-    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 3200 - moodDarkness() * 800;
-    // a tiny bit of triangle-ish body via a second quiet octave for a "voiced" tone
-    const osc2 = c.createOscillator(), g2 = c.createGain();
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2000 - moodDarkness() * 400;
     osc.type = 'sine'; osc.frequency.value = f;
-    osc2.type = 'triangle'; osc2.frequency.value = f * 2;
-    // sometimes a short, plucky note, sometimes a longer sustain — melodic phrasing
-    const short = _rand() < 0.5;
-    const dur = short ? beatDur() * rnd(0.5, 0.9) : beatDur() * rnd(1.4, 2.2);
-    const peak = rnd(0.06, 0.10) * ambientDensity; // louder & more present than before
+    const dur = beatDur() * rnd(1.4, 2.2); // long, sustained, vocal
+    const peak = rnd(0.035, 0.06) * ambientDensity; // soft & gentle, like the original
     g.gain.setValueAtTime(0, c.currentTime);
-    g.gain.linearRampToValueAtTime(peak, c.currentTime + (short ? 0.02 : 0.08));
+    g.gain.linearRampToValueAtTime(peak, c.currentTime + 0.12); // soft slow attack — no plucky bite
     g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur);
-    g2.gain.setValueAtTime(0, c.currentTime);
-    g2.gain.linearRampToValueAtTime(peak * 0.18, c.currentTime + 0.03);
-    g2.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur * 0.7);
     osc.connect(lp); lp.connect(g);
     g.connect(reverbNode); dests.forEach(d => g.connect(d));
-    osc2.connect(g2); g2.connect(reverbNode); dests.forEach(d => g2.connect(d));
     osc.start(); osc.stop(c.currentTime + dur + 0.1);
-    osc2.start(); osc2.stop(c.currentTime + dur * 0.7 + 0.1);
   }
 
   // ---- gentle tape warmth bed, slow and continuous, tied to bar length ----
@@ -776,10 +777,18 @@ export function startAmbient(dests) {
     const barDur = thisBeat * BAR_BEATS;
 
     if (beatInBar === 0) {
-      // new bar — drift to a new (different) scale degree within currentScale,
-      // re-voice the pad with overlap so it crossfades into the previous chord
-      let degree = pick(CHORD_DEGREES);
-      if (degree === lastDegree) degree = pick(CHORD_DEGREES.filter(d => d !== lastDegree));
+      // new bar — move the pad to the NEXT chord. Mostly walk the smooth
+      // i–vi–iv–v progression (so changes feel like motion within the key,
+      // not random leaps); occasionally take a small variation to a nearby
+      // stable degree. This fixes the jarring key/scale transitions.
+      let degree;
+      if (_rand() < 0.78) {
+        degree = PROGRESSION[progStep % PROGRESSION.length];
+        progStep++;
+      } else {
+        degree = pick(CHORD_DEGREES);
+        if (degree === lastDegree) degree = pick(CHORD_DEGREES.filter(d => d !== lastDegree));
+      }
       lastDegree = degree;
       playChord(chordFromScale(currentScale, degree), barDur * 1.15); // slightly longer than the bar so it crossfades into the next
       playTapeWarmth(barDur * 1.1);
@@ -789,14 +798,12 @@ export function startAmbient(dests) {
     // pulse on beats 0 and 2 (the "1 and 3")
     if (beatInBar === 0 || beatInBar === 2) playPulse();
 
-    // motif notes: the melodic voice. Play more often (brighter text = more
-    // melodic activity) and allow notes on any beat, so a clear, lively tune
-    // emerges rather than the odd isolated tone. Brighter → busier & more singing.
-    const motifChance = (0.42 + (1 - moodDarkness()) * 0.28) * ambientDensity;
-    if (_rand() < motifChance) {
+    // motif notes: sparse & singing, like the original — a gentle recurring
+    // melodic voice, not a busy lead. Brighter text is a little more active.
+    // Mostly on off-beats so it floats over the pad rather than marching.
+    const motifChance = (0.34 + (1 - moodDarkness()) * 0.12) * ambientDensity;
+    if (_rand() < motifChance && (beatInBar === 1 || beatInBar === 3)) {
       playMotifNote();
-      // occasionally a quick answering note right after — a little melodic phrase
-      if (_rand() < 0.3) ambTimers.push(setTimeout(() => { if (!stopping && clockRunning) playMotifNote(); }, thisBeat * 500));
     }
 
     // vinyl crackle — nostalgia-driven, sparse & random across the bar (Burial dust)
@@ -814,6 +821,38 @@ export function startAmbient(dests) {
 
   startDrone(); // darkness-driven sub drone runs under the whole piece
   tick();
+}
+
+// Play a brief, soft chord that colours a meaningful moment in the text (end of
+// a sentence, a strong/peak word). The voicing is chosen from CHORD_VOICINGS by
+// the text's mood and built from currentScale, so it's always in-key. It's quiet
+// and short — harmonic colour, never the backbone. `moodKey` selects the group.
+export function playChordVoicing(moodKey, dests, pan = 0, strength = 1) {
+  const c = ac();
+  const group = CHORD_VOICINGS[moodKey] || CHORD_VOICINGS.calm;
+  const offsets = pick(group);
+  // pick a stable-ish root degree (i, iv, v, vi) so the chord sits well in key
+  const rootDeg = pick([0, 0, 3, 4, 5]);
+  const freqs = buildVoicing(currentScale, offsets, rootDeg);
+  const panner = c.createStereoPanner();
+  panner.pan.value = Math.max(-1, Math.min(1, pan));
+  panner.connect(reverbNode);
+  dests.forEach(d => panner.connect(d));
+  const dur = rnd(1.1, 2.0);
+  freqs.forEach((f, i) => {
+    const osc = c.createOscillator(), g = c.createGain();
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2200;
+    // soft, warm tone; slightly staggered entry = gentle "strum"
+    osc.type = i === 0 ? 'sine' : 'triangle';
+    osc.frequency.value = f;
+    const t0 = c.currentTime + i * 0.012;
+    const peak = (0.05 + strength * 0.05) * (1 - i * 0.08); // quiet; top notes softer
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(Math.max(0.008, peak), t0 + 0.06);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(lp); lp.connect(g); g.connect(panner);
+    osc.start(t0); osc.stop(t0 + dur + 0.1);
+  });
 }
 
 // Play a word's voice through a per-note stereo panner, so successive words
@@ -837,3 +876,11 @@ export function getAmbientDensity() { return ambientDensity; }
 export function resetReverb() { reverbNode = null; reverbSend = null; }
 export function randUnit() { return _rand(); }
 export function getCurrentMood() { return currentMood; }
+
+// Map the current text signals to a chord-voicing group name for playChordVoicing.
+export function currentChordMood() {
+  if (sig.tension > 0.45) return 'tense';
+  if (sig.darkness > 0.62) return 'dark';
+  if (sig.darkness < 0.32) return 'bright';
+  return 'calm';
+}

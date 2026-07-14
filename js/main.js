@@ -1,6 +1,6 @@
 import { hashText } from './mood.js';
 import {
-  ac, seedRng, VOICES, playPannedVoice,
+  ac, seedRng, VOICES, playPannedVoice, playChordVoicing, currentChordMood,
   ensureReverb, playPunctuation, deriveTextHarmony,
   startAmbient, clearAmb, wordNoteScale,
   setStopping, isStopping, setAmbientDensity, getAmbientDensity, resetReverb,
@@ -169,6 +169,13 @@ async function play() {
       const intensity = 0.7 + getAmbientDensity() * 0.3;
       playPunctuation(tok.text, dests, intensity);
       animBars(0.2 * intensity);
+      // Sentence-ending punctuation is a meaningful moment — colour it with a
+      // brief, soft chord chosen to match the text's mood. Occasional, not every
+      // time, so it stays a subtle harmonic accent rather than the backbone.
+      if ('.!?'.includes(tok.text) && randUnit() < 0.7) {
+        const strength = tok.text === '!' ? 1 : 0.7;
+        playChordVoicing(currentChordMood(), dests, Math.sin(wordsSeen * 0.37) * 0.4, strength);
+      }
       const pause = tok.text === '.' ? 420 : tok.text === '?' ? 380 : tok.text === '!' ? 340 : tok.text === ',' ? 200 : 150;
       await sleep(pause);
       continue;

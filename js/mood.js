@@ -739,3 +739,84 @@ export function chordFromScale(scale, degreeRoot) {
   const seventh = scale[(degreeRoot + 6) % len] * ((degreeRoot + 6) >= len ? 2 : 1);
   return [root, third, fifth, seventh];
 }
+
+// ── Chord voicing library ─────────────────────────────────────
+// A chord is defined as a set of SCALE-DEGREE offsets (steps within the current
+// scale), NOT fixed frequencies — so every voicing is automatically built from
+// currentScale and stays perfectly in-key in any mode. Offsets ≥ 7 wrap to the
+// next octave. Voicings are grouped by feel so the piece can pick a chord that
+// matches the text's mood at a meaningful moment (end of a sentence, a strong
+// word, an emotional peak). Kept as brief, occasional colour — not the backbone.
+export const CHORD_VOICINGS = {
+  // warm / bright / resolved — for positive, hopeful, loving text
+  bright: [
+    [0, 2, 4],           // triad (I)
+    [0, 2, 4, 6],        // 7th
+    [0, 2, 4, 8],        // add9 (9th an octave up)
+    [0, 2, 4, 6, 8],     // 9th
+    [0, 4, 7, 9],        // spread: root, 5th, up-root, up-3rd
+    [0, 2, 4, 7],        // triad + octave
+    [0, 1, 4],           // sus2
+    [0, 3, 4],           // sus4
+    [0, 2, 5],           // 6th (add 6)
+    [0, 2, 4, 5],        // triad + 6th
+    [0, 4, 9, 11],       // wide, airy
+    [0, 2, 4, 6, 9],     // maj9 spread
+    [0, 7, 9, 11],       // high, glassy
+    [0, 2, 7, 9],        // open, floating
+  ],
+  // neutral / gentle — for plain or calm text
+  calm: [
+    [0, 4],              // bare 5th (open, restful)
+    [0, 7],              // octave
+    [0, 2, 4],           // simple triad
+    [0, 4, 7],           // root, 5th, octave — very open
+    [0, 2, 4, 7],
+    [0, 4, 9],           // quiet spread
+    [0, 2, 7],           // sus-ish open
+    [0, 3, 7],
+    [0, 4, 6],
+    [0, 2, 4, 11],       // gentle high colour
+  ],
+  // dark / sad / heavy — lower, closer, minor-leaning voicings
+  dark: [
+    [0, 2, 4],           // triad (minor in dark modes)
+    [0, 2, 4, 6],        // min7
+    [0, 2, 6],           // no-5th, hollow
+    [-3, 0, 2, 4],       // 5th in the bass, heavy
+    [0, 2, 4, -3],       // low root doubling
+    [-7, 0, 2, 4],       // deep root
+    [0, 1, 2, 4],        // cluster-ish, mournful
+    [0, 2, 4, 5],
+    [0, 2, 3, 4],        // dense, dark
+    [-3, 0, 4],          // low, open, bleak
+    [0, 3, 4, 6],        // suspended, unresolved
+  ],
+  // tense / unstable / anxious — dissonant, exotic, edgy voicings
+  tense: [
+    [0, 1, 4],           // b2 cluster tension
+    [0, 1, 2, 4],        // tight cluster
+    [0, 3, 6],           // tritone-ish (in modes that allow it)
+    [0, 2, 5, 6],        // added dissonance
+    [0, 1, 3, 6],        // unstable
+    [0, 6, 7],           // leading, unresolved
+    [0, 1, 4, 5],        // stacked seconds
+    [0, 2, 4, 1],        // triad + jarring 2nd on top
+    [0, 3, 4, 6],
+    [0, 1, 6],           // sparse, anxious
+  ],
+};
+
+// Build actual frequencies for a voicing (array of scale-degree offsets) from a
+// scale, starting at a given root degree. Offsets can be negative (octave down)
+// or ≥ scale length (octave up) — the math keeps everything octave-correct and
+// therefore in-key.
+export function buildVoicing(scale, offsets, rootDegree = 0) {
+  const len = scale.length;
+  return offsets.map(off => {
+    const deg = rootDegree + off;
+    const idx = ((deg % len) + len) % len;      // wrapped scale index
+    const octShift = Math.floor(deg / len);      // how many octaves up/down
+    return scale[idx] * Math.pow(2, octShift);
+  });
+}
