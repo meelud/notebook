@@ -13,6 +13,7 @@ const playBtn = document.getElementById('bPlay');
 const stopBtn = document.getElementById('bStop');
 const saveBtn = document.getElementById('bSave');
 const statusEl = document.getElementById('wc');
+const renderEl = document.getElementById('render');
 
 // ──────────────────────────────────────────────────────────────
 //  State
@@ -65,6 +66,46 @@ function detectSentenceType(text) {
 }
 
 // ──────────────────────────────────────────────────────────────
+//  Word highlight (render overlay)
+// ──────────────────────────────────────────────────────────────
+let wordSpans = [];
+
+function buildRenderOverlay(text) {
+  if (!renderEl) return;
+  // Split text preserving whitespace for display
+  const parts = text.split(/(\s+)/);
+  renderEl.innerHTML = '';
+  wordSpans = [];
+  for (const part of parts) {
+    if (/^\s+$/.test(part)) {
+      // Preserve whitespace as text node
+      renderEl.appendChild(document.createTextNode(part));
+    } else if (part) {
+      const span = document.createElement('span');
+      span.textContent = part;
+      renderEl.appendChild(span);
+      wordSpans.push(span);
+    }
+  }
+  renderEl.style.display = 'block';
+  if (editor) editor.style.color = 'transparent';
+}
+
+function highlightWord(idx) {
+  // Remove previous highlights
+  wordSpans.forEach(s => s.classList.remove('w-active'));
+  if (idx >= 0 && idx < wordSpans.length) {
+    wordSpans[idx].classList.add('w-active');
+  }
+}
+
+function clearRenderOverlay() {
+  if (renderEl) { renderEl.style.display = 'none'; renderEl.innerHTML = ''; }
+  if (editor) editor.style.color = '';
+  wordSpans = [];
+}
+
+// ──────────────────────────────────────────────────────────────
 //  Playback loop
 // ──────────────────────────────────────────────────────────────
 function startPlayback() {
@@ -96,9 +137,11 @@ function startPlayback() {
 
   // Start recording if MediaRecorder available
   startRecording();
+  buildRenderOverlay(text);
 
   // Play words one by one with timing
   let idx = 0;
+  let wordHighlightIdx = 0;
   function playNext() {
     if (!playing || idx >= tokens.length) {
       // Let ambient ring out for a moment then stop
@@ -118,6 +161,7 @@ function startPlayback() {
         // Now play the actual word after the breath
         if (!playing) return;
         const result = playWord(token.word, sentenceType, progress, null, token.len);
+        highlightWord(wordHighlightIdx++);
         const wordDur = result.duration || 0.4;
         // Base timing between words
         const gap = wordDur * rnd(0.5, 0.8) + 0.05;
@@ -128,6 +172,7 @@ function startPlayback() {
 
     // Play the word
     const result = playWord(token.word, sentenceType, progress, token.punctBefore, token.len);
+    highlightWord(wordHighlightIdx++);
 
     if (result.played) {
       const wordDur = result.duration || 0.4;
@@ -149,6 +194,7 @@ function stopPlayback() {
   playing = false;
   if (playTimeout) { clearTimeout(playTimeout); playTimeout = null; }
   stopAmbient();
+  clearRenderOverlay();
   updatePlayState(); // re-enable play if there's text
   if (stopBtn) stopBtn.disabled = true;
   if (saveBtn) saveBtn.disabled = (recordedChunks.length === 0);
