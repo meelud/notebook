@@ -32,30 +32,26 @@ let recordedChunks = [];
 //  Tokenizer — split text into words + keep punctuation context
 // ──────────────────────────────────────────────────────────────
 function tokenize(text) {
-  // Split on whitespace but keep track of punctuation before each word
+  // Robust tokenizer: handles Persian (with ZWNJ/نیم‌فاصله), Arabic, English,
+  // numbers, emoji, and preserves punctuation context for silence/breath logic.
   const tokens = [];
-  const parts = text.split(/(\s+)/);
+  // Match: word characters (incl. Persian/Arabic + ZWNJ + numbers + emoji)
+  // or whitespace/punctuation chunks
+  const regex = /([\p{L}\p{N}\u200c]+)|(\s+)|([^\p{L}\p{N}\u200c\s]+)/gu;
   let lastPunct = '';
-  for (const part of parts) {
-    if (/^\s+$/.test(part)) {
-      // whitespace — check for paragraph breaks
-      if (/\n\s*\n/.test(part)) lastPunct += '\n\n';
-      continue;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    if (match[1]) {
+      // Word (letters/numbers/ZWNJ)
+      tokens.push({ word: match[1], punctBefore: lastPunct, len: match[1].length });
+      lastPunct = '';
+    } else if (match[2]) {
+      // Whitespace — detect paragraph breaks
+      if (/\n\s*\n/.test(match[2])) lastPunct += '\n\n';
+    } else if (match[3]) {
+      // Punctuation
+      lastPunct += match[3];
     }
-    if (!part) continue;
-    // Extract leading punctuation
-    const leadMatch = part.match(/^([^a-zA-Z\u0600-\u06FF\u0750-\u077F]+)/);
-    if (leadMatch) lastPunct += leadMatch[1];
-    // The word itself (strip trailing punct for word, but save it)
-    const wordMatch = part.match(/([a-zA-Z\u0600-\u06FF\u0750-\u077F\u200c]+)/g);
-    const trailMatch = part.match(/([^a-zA-Z\u0600-\u06FF\u0750-\u077F]+)$/);
-    if (wordMatch) {
-      for (const w of wordMatch) {
-        tokens.push({ word: w, punctBefore: lastPunct, len: w.length });
-        lastPunct = '';
-      }
-    }
-    if (trailMatch) lastPunct += trailMatch[1];
   }
   return tokens;
 }
@@ -255,6 +251,30 @@ function saveRecording() {
 // ──────────────────────────────────────────────────────────────
 //  Event Listeners & Keyboard Shortcuts
 // ──────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────
+//  iOS / Mobile: unlock AudioContext on first user interaction
+// ──────────────────────────────────────────────────────────────
+let audioUnlocked = false;
+function unlockAudio() {
+  if (audioUnlocked) return;
+  const ctx = ensureCtx();
+  if (ctx.state === 'suspended') ctx.resume();
+  // Create a silent buffer and play it to unlock on iOS Safari
+  const silent = ctx.createBuffer(1, 1, ctx.sampleRate);
+  const src = ctx.createBufferSource();
+  src.buffer = silent;
+  src.connect(ctx.destination);
+  src.start();
+  audioUnlocked = true;
+  // Remove listeners after unlock
+  ['touchstart', 'touchend', 'mousedown', 'keydown'].forEach(evt => {
+    document.removeEventListener(evt, unlockAudio, { capture: true });
+  });
+}
+['touchstart', 'touchend', 'mousedown', 'keydown'].forEach(evt => {
+  document.addEventListener(evt, unlockAudio, { capture: true, once: false });
+});
+
 if (playBtn) playBtn.addEventListener('click', startPlayback);
 if (stopBtn) stopBtn.addEventListener('click', stopPlayback);
 if (saveBtn) saveBtn.addEventListener('click', saveRecording);
