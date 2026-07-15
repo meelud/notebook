@@ -637,7 +637,22 @@ export function playWord(word, sentenceType, progress, punctBefore, wordLen) {
   if (!reverbNode) buildReverb();
   cleanupVoices();
 
-  const dest = getMasterBus();
+  // Stereo panning: gentle, seeded per-note position so the mix breathes in space.
+  // Pro approach — the DRY (direct) signal is panned; the reverb tail stays centered
+  // (shared room), so we route the voice into a panner → master, while the voice's
+  // own reverb send (inside each voice fn) still goes to the centered reverbNode.
+  const panner = c.createStereoPanner ? c.createStereoPanner() : null;
+  let dest;
+  if (panner) {
+    // Subtle, musical spread: mostly near-center, occasionally wider — never hard-panned.
+    panner.pan.value = Math.max(-0.85, Math.min(0.85, rnd(-0.55, 0.55)));
+    panner.connect(getMasterBus());
+    dest = panner;
+    // GC: disconnect the panner after the note's tail (generous 8s cap)
+    setTimeout(() => { try { panner.disconnect(); } catch (e) {} }, 8000);
+  } else {
+    dest = getMasterBus();
+  }
 
   // Task 8: intelligent silence (musical breath)
   // Only check silence here if punctBefore is non-null (main.js handles it separately)
