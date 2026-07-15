@@ -12,8 +12,13 @@ const editor = document.getElementById('editor');
 const playBtn = document.getElementById('bPlay');
 const stopBtn = document.getElementById('bStop');
 const saveBtn = document.getElementById('bSave');
-const statusEl = document.getElementById('wc');
+const clearBtn = document.getElementById('bClear');
+const wcEl = document.getElementById('wc');
 const renderEl = document.getElementById('render');
+const progEl = document.getElementById('prog');
+const progFill = document.getElementById('pf');
+const vizEl = document.getElementById('viz');
+const vizBars = vizEl ? [...vizEl.querySelectorAll('.bar')] : [];
 
 // ──────────────────────────────────────────────────────────────
 //  State
@@ -115,7 +120,8 @@ function startPlayback() {
   playing = true;
   if (playBtn) playBtn.disabled = true;
   if (stopBtn) stopBtn.disabled = false;
-  if (statusEl) statusEl.textContent = '▶ Playing...';
+  if (wcEl) wcEl.textContent = '▶ playing';
+  startViz();
 
   // Seed RNG from text hash for deterministic output
   const hash = hashText(text);
@@ -151,6 +157,7 @@ function startPlayback() {
 
     const token = tokens[idx];
     const progress = idx / totalWords;
+    showProgress(progress);
 
     // Check for silence/breath before this word
     const silence = getSilenceDuration(token.punctBefore, idx, totalWords);
@@ -195,10 +202,12 @@ function stopPlayback() {
   if (playTimeout) { clearTimeout(playTimeout); playTimeout = null; }
   stopAmbient();
   clearRenderOverlay();
-  updatePlayState(); // re-enable play if there's text
+  hideProgress();
+  stopViz();
+  updatePlayState();
+  updateWordCount();
   if (stopBtn) stopBtn.disabled = true;
   if (saveBtn) saveBtn.disabled = (recordedChunks.length === 0);
-  if (statusEl) statusEl.textContent = '⏹ Stopped';
   stopRecording();
 }
 
@@ -228,7 +237,8 @@ function stopRecording() {
 
 function saveRecording() {
   if (recordedChunks.length === 0) {
-    if (statusEl) statusEl.textContent = '⚠ Nothing recorded yet';
+    if (wcEl) wcEl.textContent = '⚠ nothing recorded';
+    setTimeout(updateWordCount, 2000);
     return;
   }
   const blob = new Blob(recordedChunks, { type: 'audio/webm' });
@@ -238,7 +248,8 @@ function saveRecording() {
   a.download = `notebook-${Date.now()}.webm`;
   a.click();
   URL.revokeObjectURL(url);
-  if (statusEl) statusEl.textContent = '💾 Saved!';
+  if (wcEl) wcEl.textContent = '💾 saved!';
+  setTimeout(updateWordCount, 2000);
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -266,16 +277,69 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// Initial state
+// ──────────────────────────────────────────────────────────────
+//  Word count
+// ──────────────────────────────────────────────────────────────
+function updateWordCount() {
+  const text = editor ? (editor.value || '') : '';
+  const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+  if (wcEl && !playing) wcEl.textContent = `${words} word${words !== 1 ? 's' : ''}`;
+}
+
+// ──────────────────────────────────────────────────────────────
+//  Progress bar & Visualizer
+// ──────────────────────────────────────────────────────────────
+function showProgress(fraction) {
+  if (progEl) progEl.classList.add('on');
+  if (progFill) progFill.style.width = `${Math.min(fraction * 100, 100)}%`;
+}
+function hideProgress() {
+  if (progEl) progEl.classList.remove('on');
+  if (progFill) progFill.style.width = '0%';
+}
+
+let vizInterval = null;
+function startViz() {
+  if (vizEl) vizEl.classList.add('on');
+  vizInterval = setInterval(() => {
+    vizBars.forEach(bar => {
+      bar.style.height = `${2 + Math.random() * 14}px`;
+    });
+  }, 120);
+}
+function stopViz() {
+  if (vizEl) vizEl.classList.remove('on');
+  if (vizInterval) { clearInterval(vizInterval); vizInterval = null; }
+  vizBars.forEach(bar => { bar.style.height = '1.5px'; });
+}
+
+// ──────────────────────────────────────────────────────────────
+//  Clear button
+// ──────────────────────────────────────────────────────────────
+if (clearBtn) {
+  clearBtn.addEventListener('click', () => {
+    if (playing) stopPlayback();
+    if (editor) editor.value = '';
+    updateWordCount();
+    updatePlayState();
+  });
+}
+
+// ──────────────────────────────────────────────────────────────
+//  Initial state & play-button logic
+// ──────────────────────────────────────────────────────────────
 if (stopBtn) stopBtn.disabled = true;
 if (saveBtn) saveBtn.disabled = true;
 
-// Enable play button when there's text
 function updatePlayState() {
-  const text = editor.value || '';
+  const text = editor ? (editor.value || '') : '';
   if (playBtn) playBtn.disabled = !text.trim();
 }
 if (editor) {
-  editor.addEventListener('input', updatePlayState);
-  updatePlayState(); // check on load
+  editor.addEventListener('input', () => {
+    updatePlayState();
+    updateWordCount();
+  });
+  updatePlayState();
+  updateWordCount();
 }
