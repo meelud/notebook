@@ -172,9 +172,9 @@ function startPlayback() {
 
     // Play the word
     const result = playWord(token.word, sentenceType, progress, token.punctBefore, token.len);
-    highlightWord(wordHighlightIdx++);
 
     if (result.played) {
+      highlightWord(wordHighlightIdx++);
       const wordDur = result.duration || 0.4;
       const gap = wordDur * rnd(0.4, 0.7) + 0.03;
       idx++;

@@ -640,10 +640,12 @@ export function playWord(word, sentenceType, progress, punctBefore, wordLen) {
   const dest = getMasterBus();
 
   // Task 8: intelligent silence (musical breath)
-  const silence = getSilenceDuration(punctBefore, 0, 1);
-  if (silence > 0) {
-    // Return silence duration — caller should delay next word by this amount
-    return { played: false, silenceDur: silence };
+  // Only check silence here if punctBefore is non-null (main.js handles it separately)
+  if (punctBefore) {
+    const silence = getSilenceDuration(punctBefore, 0, 1);
+    if (silence > 0) {
+      return { played: false, silenceDur: silence };
+    }
   }
 
   // Select voice from group
