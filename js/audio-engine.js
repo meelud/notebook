@@ -890,4 +890,4 @@ export function isAmbientRunning() { return ambientRunning; }
 // ──────────────────────────────────────────────────────────────
 //  Exports for main.js
 // ──────────────────────────────────────────────────────────────
-export { ensureCtx, getMasterBus, reverbNode, stepwiseNoteIndex, cleanupVoices };
+export { ensureCtx, getMasterBus, reverbNode, stepwiseNoteIndex, cleanupVoices, rnd };

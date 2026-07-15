@@ -2,17 +2,17 @@ import { hashText } from './mood.js';
 import {
   ac, seedRng, VOICES, playWord, setMood, wordNoteScale,
   startAmbient, stopAmbient, isAmbientRunning, ensureCtx, getMasterBus,
-  getSilenceDuration,
+  getSilenceDuration, rnd,
 } from './audio-engine.js';
 
 // ──────────────────────────────────────────────────────────────
 //  DOM refs
 // ──────────────────────────────────────────────────────────────
 const editor = document.getElementById('editor');
-const playBtn = document.getElementById('play-btn');
-const stopBtn = document.getElementById('stop-btn');
-const saveBtn = document.getElementById('save-btn');
-const statusEl = document.getElementById('status');
+const playBtn = document.getElementById('bPlay');
+const stopBtn = document.getElementById('bStop');
+const saveBtn = document.getElementById('bSave');
+const statusEl = document.getElementById('wc');
 
 // ──────────────────────────────────────────────────────────────
 //  State
