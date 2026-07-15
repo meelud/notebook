@@ -297,27 +297,34 @@ function encodeWAV(left, right, sampleRate) {
 }
 
 // Build a simple black cover PNG with the text (Canvas, zero-dependency)
-function buildCover(text) {
+const COVER_FONT = '"EB Garamond", Georgia, serif';
+
+function drawCover(canvas, text) {
   const size = 1000;
-  const canvas = document.createElement('canvas');
   canvas.width = size; canvas.height = size;
   const ctx = canvas.getContext('2d');
-  // black background
-  ctx.fillStyle = '#000000';
+  // deep black with a very subtle vignette for depth
+  ctx.fillStyle = '#0a0a0a';
   ctx.fillRect(0, 0, size, size);
-  // text style — iPhone-like system font
-  ctx.fillStyle = '#f2f2f2';
+  const grad = ctx.createRadialGradient(size/2, size/2, size*0.15, size/2, size/2, size*0.75);
+  grad.addColorStop(0, '#141414');
+  grad.addColorStop(1, '#000000');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+
+  ctx.fillStyle = '#e8e2d6';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   const isRTL = /[\u0600-\u06FF]/.test(text);
   ctx.direction = isRTL ? 'rtl' : 'ltr';
-  // fit text: wrap into lines, shrink font to fit
+
   const clean = text.trim().replace(/\s+/g, ' ');
-  let fontSize = 64;
-  const maxWidth = size * 0.82;
-  const maxHeight = size * 0.82;
+  let fontSize = 78;
+  const maxWidth = size * 0.80;
+  const maxHeight = size * 0.72;
+
   function wrapLines(fs) {
-    ctx.font = `500 ${fs}px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif`;
+    ctx.font = `400 ${fs}px ${COVER_FONT}`;
     const words = clean.split(' ');
     const lines = [];
     let line = '';
@@ -330,15 +337,31 @@ function buildCover(text) {
     return lines;
   }
   let lines = wrapLines(fontSize);
-  while ((lines.length * fontSize * 1.4) > maxHeight && fontSize > 18) {
-    fontSize -= 4;
+  while ((lines.length * fontSize * 1.45) > maxHeight && fontSize > 20) {
+    fontSize -= 3;
     lines = wrapLines(fontSize);
   }
-  ctx.font = `500 ${fontSize}px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif`;
-  const lineH = fontSize * 1.4;
+  ctx.font = `400 ${fontSize}px ${COVER_FONT}`;
+  const lineH = fontSize * 1.45;
   const startY = size / 2 - ((lines.length - 1) * lineH) / 2;
+  // soft glow behind text
+  ctx.shadowColor = 'rgba(232,226,214,0.15)';
+  ctx.shadowBlur = 30;
   lines.forEach((ln, i) => ctx.fillText(ln, size / 2, startY + i * lineH));
-  return canvas;
+  ctx.shadowBlur = 0;
+
+  // small "notebook" wordmark bottom
+  ctx.font = `300 22px "Inter", sans-serif`;
+  ctx.fillStyle = 'rgba(232,226,214,0.35)';
+  ctx.direction = 'ltr';
+  ctx.fillText('notebook', size / 2, size - 60);
+}
+
+// Returns a Promise<canvas> — waits for fonts to load so the cover renders correctly
+function buildCover(text) {
+  const canvas = document.createElement('canvas');
+  const ready = (document.fonts && document.fonts.ready) ? document.fonts.ready : Promise.resolve();
+  return ready.then(() => { drawCover(canvas, text); return canvas; });
 }
 
 function downloadBlob(blob, filename) {
@@ -365,14 +388,14 @@ function saveRecording() {
   const right = mergeBuffers(recBuffersR, recLength);
   const wavBlob = encodeWAV(left, right, recSampleRate);
   const base = `notebook-${slugFromText(recSourceText)}`;
+  // Download the WAV first
   downloadBlob(wavBlob, `${base}.wav`);
-  // cover art PNG
-  try {
-    const cover = buildCover(recSourceText);
+  // Then the cover PNG, with a delay so the browser allows the second download
+  buildCover(recSourceText).then((cover) => {
     cover.toBlob((pngBlob) => {
-      if (pngBlob) downloadBlob(pngBlob, `${base}-cover.png`);
+      if (pngBlob) setTimeout(() => downloadBlob(pngBlob, `${base}-cover.png`), 600);
     }, 'image/png');
-  } catch (e) {}
+  }).catch(() => {});
   if (wcEl) wcEl.textContent = '💾 saved!';
   setTimeout(updateWordCount, 2000);
 }
