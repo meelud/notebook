@@ -1,308 +1,223 @@
 import { hashText } from './mood.js';
 import {
-  ac, seedRng, VOICES, playPannedVoice, playChordVoicing, currentChordMood,
-  ensureReverb, playPunctuation, deriveTextHarmony,
-  startAmbient, clearAmb, wordNoteScale,
-  setStopping, isStopping, setAmbientDensity, getAmbientDensity, resetReverb,
-  rnd, pick, randUnit,
+  ac, seedRng, VOICES, playWord, setMood, wordNoteScale,
+  startAmbient, stopAmbient, isAmbientRunning, ensureCtx, getMasterBus,
+  getSilenceDuration,
 } from './audio-engine.js';
 
+// ──────────────────────────────────────────────────────────────
+//  DOM refs
+// ──────────────────────────────────────────────────────────────
 const editor = document.getElementById('editor');
-const render = document.getElementById('render');
-const bPlay  = document.getElementById('bPlay');
-const bStop  = document.getElementById('bStop');
-const bSave  = document.getElementById('bSave');
-const bClear = document.getElementById('bClear');
-const wcEl   = document.getElementById('wc');
-const viz    = document.getElementById('viz');
-const bars   = viz.querySelectorAll('.bar');
-// (status pill removed — no stEl reference needed)
-const prog   = document.getElementById('prog');
-const pf     = document.getElementById('pf');
+const playBtn = document.getElementById('play-btn');
+const stopBtn = document.getElementById('stop-btn');
+const saveBtn = document.getElementById('save-btn');
+const statusEl = document.getElementById('status');
 
+// ──────────────────────────────────────────────────────────────
+//  State
+// ──────────────────────────────────────────────────────────────
 let playing = false;
-let rec = null, chunks = [], audioBlob = null;
+let playTimeout = null;
+let mediaRecorder = null;
+let recordedChunks = [];
 
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
+// ──────────────────────────────────────────────────────────────
+//  Tokenizer — split text into words + keep punctuation context
+// ──────────────────────────────────────────────────────────────
 function tokenize(text) {
+  // Split on whitespace but keep track of punctuation before each word
   const tokens = [];
-  let i = 0;
-  while (i < text.length) {
-    const ch = text[i];
-    if (ch === ' ' || ch === '\n') {
-      tokens.push({ type: 'space', start: i, end: i + 1, text: ch });
-      i++;
-    } else if ('.!?,;:'.includes(ch)) {
-      tokens.push({ type: 'punct', start: i, end: i + 1, text: ch });
-      i++;
-    } else {
-      let j = i;
-      while (j < text.length && text[j] !== ' ' && text[j] !== '\n' && !'.!?,;:'.includes(text[j])) j++;
-      tokens.push({ type: 'word', start: i, end: j, text: text.slice(i, j) });
-      i = j;
+  const parts = text.split(/(\s+)/);
+  let lastPunct = '';
+  for (const part of parts) {
+    if (/^\s+$/.test(part)) {
+      // whitespace — check for paragraph breaks
+      if (/\n\s*\n/.test(part)) lastPunct += '\n\n';
+      continue;
     }
-  }
-
-  // annotate words with sentence context — look ahead to find each
-  // sentence's ending punctuation so words get tagged with THEIR sentence's type
-  const totalWords = tokens.filter(t => t.type === 'word').length;
-  let wordIdx = 0;
-
-  for (let k = 0; k < tokens.length; k++) {
-    const t = tokens[k];
-    if (t.type === 'word') {
-      // scan forward to the next sentence-ending punctuation
-      let endType = 'statement';
-      for (let m = k + 1; m < tokens.length; m++) {
-        if (tokens[m].type === 'punct') {
-          if (tokens[m].text === '?') { endType = 'question'; break; }
-          if (tokens[m].text === '!') { endType = 'exclaim'; break; }
-          if (tokens[m].text === '.') { endType = 'statement'; break; }
-        }
+    if (!part) continue;
+    // Extract leading punctuation
+    const leadMatch = part.match(/^([^a-zA-Z\u0600-\u06FF\u0750-\u077F]+)/);
+    if (leadMatch) lastPunct += leadMatch[1];
+    // The word itself (strip trailing punct for word, but save it)
+    const wordMatch = part.match(/([a-zA-Z\u0600-\u06FF\u0750-\u077F\u200c]+)/g);
+    const trailMatch = part.match(/([^a-zA-Z\u0600-\u06FF\u0750-\u077F]+)$/);
+    if (wordMatch) {
+      for (const w of wordMatch) {
+        tokens.push({ word: w, punctBefore: lastPunct, len: w.length });
+        lastPunct = '';
       }
-      t.sentenceType = endType;
-      wordIdx++;
-      t.paraPos = wordIdx < totalWords * 0.18 ? 'start' : (wordIdx > totalWords * 0.82 ? 'end' : 'middle');
     }
+    if (trailMatch) lastPunct += trailMatch[1];
   }
   return tokens;
 }
 
-function esc(s) {
-  // #render uses white-space: pre-wrap, so real newlines render correctly —
-  // we only need to neutralize HTML-significant characters here.
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+// ──────────────────────────────────────────────────────────────
+//  Sentence type detection
+// ──────────────────────────────────────────────────────────────
+function detectSentenceType(text) {
+  const trimmed = text.trim();
+  if (/[?؟]\s*$/.test(trimmed)) return 'question';
+  if (/[!]\s*$/.test(trimmed)) return 'exclamation';
+  return 'statement';
 }
 
-function buildRender(text, a, b) {
-  if (a >= b) return esc(text);
-  return esc(text.slice(0, a))
-    + `<span class="w-active">${esc(text.slice(a, b))}</span>`
-    + esc(text.slice(b));
-}
-
-function animBars(vol) {
-  bars.forEach(b => { b.style.height = Math.round(rnd(1.5, vol * 17)) + 'px'; });
-  setTimeout(() => bars.forEach(b => b.style.height = '1.5px'), 120);
-}
-
-// status text used to render to a visible "ready" pill — that pill is gone now,
-// but status() stays as a no-op hook so the rest of the playback logic (which
-// calls it to report progress) doesn't need to change.
-function status(s) { /* intentionally no-op — no visible status indicator */ }
-
-// Harmony is only (re)derived once per text session — the first time play is pressed
-// after a clear. Every subsequent press of play (even after continuing to write more)
-// reads the WHOLE text from the very beginning again, using that same locked key.
-let harmonyLocked = false;
-
-async function play() {
-  const text = editor.value;
+// ──────────────────────────────────────────────────────────────
+//  Playback loop
+// ──────────────────────────────────────────────────────────────
+function startPlayback() {
+  const text = editor.value || editor.innerText || '';
   if (!text.trim()) return;
 
-  if (!harmonyLocked) {
-    const harmony = deriveTextHarmony(text); // sets currentScale + currentMood, locked until cleared
-    harmonyLocked = true;
-    status('key: ' + harmony.mood);
-  }
+  playing = true;
+  if (playBtn) playBtn.disabled = true;
+  if (stopBtn) stopBtn.disabled = false;
+  if (statusEl) statusEl.textContent = '▶ Playing...';
 
-  // reset the seeded RNG from this exact text every time — guarantees the
-  // entire melody, voice choices, timing, and ambient pattern are identical
-  // on every replay of the same text
-  seedRng(hashText(text));
+  // Seed RNG from text hash for deterministic output
+  const hash = hashText(text);
+  seedRng(hash);
 
-  playing = true; setStopping(false);
-  resetReverb();
-  setAmbientDensity(1);
-  bPlay.disabled = true; bStop.disabled = false; bSave.disabled = true;
-  editor.style.display = 'none';
-  render.style.display = 'block';
-  render.innerHTML = esc(text);
-  viz.classList.add('on');
-  prog.classList.add('on');
-  pf.style.width = '0%';
-  chunks = []; audioBlob = null;
+  // Set mood/scale from text
+  const { mood, analysis } = setMood(text);
 
-  const c = ac();
-  await c.resume();
-  const sd = c.createMediaStreamDestination();
-  const dests = [c.destination, sd];
-  ensureReverb(dests);
+  // Tokenize
+  const tokens = tokenize(text);
+  if (tokens.length === 0) { stopPlayback(); return; }
 
-  rec = new MediaRecorder(sd.stream);
-  rec.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-  rec.onstop = () => {
-    audioBlob = new Blob(chunks, { type: 'audio/webm' });
-    bSave.disabled = false;
-    status('done — press write to continue, or play again');
-  };
-  rec.start();
-  startAmbient(dests);
+  const sentenceType = detectSentenceType(text);
+  const totalWords = tokens.length;
 
-  const tokens = tokenize(text); // tokenize the FULL text — always read from the very beginning
-  const playable = tokens.filter(t => t.type === 'word' || t.type === 'punct');
-  const totalWords = tokens.filter(t => t.type === 'word').length;
+  // Start ambient bed
+  const masterDest = getMasterBus();
+  startAmbient([masterDest]);
 
-  // voice groups by sentence type — question/exclaim lean toward brighter/plucked/percussive
-  // voices, statements lean toward warmer pads/sustained/breathy voices. Indices map to the
-  // VOICES array: 0 pad, 1 pluck, 2 breath, 3 bell, 4 ghost-chord, 5 piano, 6 warm-pad,
-  // 7 string, 8 marimba, 9 glass-bell, 10 vibraphone, 11 music-box, 12 choir, 13 organ,
-  // 14 sub-thump, 15 reed, 16 cello, 17 kalimba, 18 brass-swell, 19 celeste, 20 granular, 21 gong
-  const VOICE_GROUPS = {
-    statement: [0, 2, 5, 6, 10, 12, 13, 15, 16, 20, 21],
-    question:  [1, 4, 7, 9, 11, 17, 19, 20],
-    exclaim:   [1, 3, 5, 8, 9, 11, 14, 17, 18],
-  };
+  // Start recording if MediaRecorder available
+  startRecording();
 
-  let voiceIdx = pick(VOICE_GROUPS.statement);
-  let wordsSeen = 0;
-  const totalWordsSafe = Math.max(1, totalWords); // guard against text with no words (e.g. "!!!") → no NaN%
-
-  for (let i = 0; i < playable.length; i++) {
-    if (isStopping()) break;
-    const tok = playable[i];
-
-    render.innerHTML = buildRender(text, tok.start, tok.end);
-
-    if (tok.type === 'punct') {
-      const intensity = 0.7 + getAmbientDensity() * 0.3;
-      playPunctuation(tok.text, dests, intensity);
-      animBars(0.2 * intensity);
-      // Sentence-ending punctuation is a meaningful moment — colour it with a
-      // brief, soft chord chosen to match the text's mood. Occasional, not every
-      // time, so it stays a subtle harmonic accent rather than the backbone.
-      if ('.!?'.includes(tok.text) && randUnit() < 0.7) {
-        const strength = tok.text === '!' ? 1 : 0.7;
-        playChordVoicing(currentChordMood(), dests, Math.sin(wordsSeen * 0.37) * 0.4, strength);
-      }
-      const pause = tok.text === '.' ? 420 : tok.text === '?' ? 380 : tok.text === '!' ? 340 : tok.text === ',' ? 200 : 150;
-      await sleep(pause);
-      continue;
+  // Play words one by one with timing
+  let idx = 0;
+  function playNext() {
+    if (!playing || idx >= tokens.length) {
+      // Let ambient ring out for a moment then stop
+      playTimeout = setTimeout(() => stopPlayback(), 3000);
+      return;
     }
 
-    // word token
-    wordsSeen++;
-    const wlen = tok.text.replace(/\W/g, '').length || 1;
-    const group = VOICE_GROUPS[tok.sentenceType] || VOICE_GROUPS.statement;
+    const token = tokens[idx];
+    const progress = idx / totalWords;
 
-    // update ambient density by paragraph position: sparser at start, denser toward end
-    setAmbientDensity(tok.paraPos === 'start' ? 0.55 : tok.paraPos === 'end' ? 1.35 : 1);
+    // Check for silence/breath before this word
+    const silence = getSilenceDuration(token.punctBefore, idx, totalWords);
+    if (silence > 0) {
+      idx++; // consume the token but play silence
+      // After silence, replay this word (or skip if it's just punctuation)
+      playTimeout = setTimeout(() => {
+        // Now play the actual word after the breath
+        if (!playing) return;
+        const result = playWord(token.word, sentenceType, progress, null, token.len);
+        const wordDur = result.duration || 0.4;
+        // Base timing between words
+        const gap = wordDur * rnd(0.5, 0.8) + 0.05;
+        playTimeout = setTimeout(playNext, (silence + gap) * 1000);
+      }, silence * 1000);
+      return;
+    }
 
-    const freq = pick(wordNoteScale());
-    // wider dynamic range → more contrast between words = more alive & dynamic
-    let vol    = rnd(0.15, 0.62);
-    const dur  = rnd(0.22, 0.48);
+    // Play the word
+    const result = playWord(token.word, sentenceType, progress, token.punctBefore, token.len);
 
-    // (6) breathing dynamics — a deeper swell/ebb across the phrase so the reading
-    // rises and falls like real speech instead of staying flat. Two overlapping
-    // sines give an organic, non-repeating contour.
-    const phraseWave = 0.72 + 0.20 * Math.sin(wordsSeen * 0.5) + 0.08 * Math.sin(wordsSeen * 0.17);
-    vol *= phraseWave;
-
-    // (3) stereo drift — successive words wander across the stereo field for
-    // spatial depth. Kept within ±0.6 so it feels "wide", never hard-panned.
-    const pan = Math.sin(wordsSeen * 0.37) * 0.6;
-
-    // shift voice more often so successive words get more timbral variety —
-    // this is a big part of what made the reading feel dynamic word-to-word.
-    if (randUnit() < 0.6) voiceIdx = pick(group);
-    playPannedVoice(voiceIdx, freq, vol, dur, dests, pan);
-    animBars(vol);
-
-    // reading pace: longer words get more time
-    const base = 300 + wlen * 28;
-    const spd  = Math.min(600, base) + rnd(-30, 50);
-    pf.style.width = Math.round((wordsSeen / totalWordsSafe) * 100) + '%';
-    status(Math.round((wordsSeen / totalWordsSafe) * 100) + '%');
-    await sleep(spd);
+    if (result.played) {
+      const wordDur = result.duration || 0.4;
+      const gap = wordDur * rnd(0.4, 0.7) + 0.03;
+      idx++;
+      playTimeout = setTimeout(playNext, gap * 1000);
+    } else {
+      // silence returned from playWord itself
+      idx++;
+      const gap = result.silenceDur || 0.2;
+      playTimeout = setTimeout(playNext, gap * 1000);
+    }
   }
 
-  setStopping(true);
-  clearAmb();
-  pf.style.width = '100%';
-  if (rec.state !== 'inactive') rec.stop();
-  render.innerHTML = esc(text);
-  viz.classList.remove('on');
-  bars.forEach(b => b.style.height = '1.5px');
+  playNext();
+}
+
+function stopPlayback() {
   playing = false;
-  bPlay.disabled = false; bStop.disabled = true;
-  setTimeout(() => prog.classList.remove('on'), 900);
-  showContinuePrompt();
+  if (playTimeout) { clearTimeout(playTimeout); playTimeout = null; }
+  stopAmbient();
+  if (playBtn) playBtn.disabled = false;
+  if (stopBtn) stopBtn.disabled = true;
+  if (statusEl) statusEl.textContent = '⏹ Stopped';
+  stopRecording();
 }
 
-// After playback ends naturally, let the person resume writing — the
-// textarea becomes editable again, pre-filled with what was just read,
-// caret placed at the end so they can keep going.
-function showContinuePrompt() {
-  editor.style.display = '';
-  render.style.display = 'none';
-  editor.focus();
-  editor.setSelectionRange(editor.value.length, editor.value.length);
-  status('continue writing — same key carries on');
+// ──────────────────────────────────────────────────────────────
+//  Recording (MediaRecorder → .webm export)
+// ──────────────────────────────────────────────────────────────
+function startRecording() {
+  try {
+    const ctx = ensureCtx();
+    const dest = ctx.createMediaStreamDestination();
+    getMasterBus().connect(dest);
+    mediaRecorder = new MediaRecorder(dest.stream, { mimeType: 'audio/webm' });
+    recordedChunks = [];
+    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+    mediaRecorder.start();
+  } catch (e) {
+    // MediaRecorder not supported — silent fail
+    mediaRecorder = null;
+  }
 }
 
-function stop() {
-  setStopping(true);
-  clearAmb();
-  if (rec && rec.state !== 'inactive') rec.stop();
-  editor.style.display = '';
-  render.style.display = 'none';
-  viz.classList.remove('on');
-  prog.classList.remove('on');
-  bars.forEach(b => b.style.height = '1.5px');
-  playing = false;
-  bPlay.disabled = false; bStop.disabled = true;
-  status('stopped');
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
 }
 
-bPlay.addEventListener('click', play);
-bStop.addEventListener('click', stop);
-bSave.addEventListener('click', () => {
-  if (!audioBlob) return;
-  const url = URL.createObjectURL(audioBlob);
+function saveRecording() {
+  if (recordedChunks.length === 0) {
+    if (statusEl) statusEl.textContent = '⚠ Nothing recorded yet';
+    return;
+  }
+  const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = 'reading.webm'; a.click();
+  a.href = url;
+  a.download = `notebook-${Date.now()}.webm`;
+  a.click();
   URL.revokeObjectURL(url);
-});
-bClear.addEventListener('click', () => {
-  if (playing) stop();
-  editor.value = '';
-  editor.style.display = '';
-  render.style.display = 'none';
-  bPlay.disabled = true; bSave.disabled = true;
-  audioBlob = null; chunks = [];
-  wcEl.textContent = '0 words';
-  pf.style.width = '0%';
-  prog.classList.remove('on');
-  harmonyLocked = false; // clearing the text means the NEXT play should derive a fresh scale
-  status('ready');
-});
+  if (statusEl) statusEl.textContent = '💾 Saved!';
+}
 
-editor.addEventListener('input', () => {
-  const v = editor.value;
-  bPlay.disabled = !v.trim();
-  const w = v.trim().split(/\s+/).filter(Boolean).length;
-  wcEl.textContent = w + (w === 1 ? ' word' : ' words');
-});
-
-// bar is always visible — flashBar no longer needed
+// ──────────────────────────────────────────────────────────────
+//  Event Listeners & Keyboard Shortcuts
+// ──────────────────────────────────────────────────────────────
+if (playBtn) playBtn.addEventListener('click', startPlayback);
+if (stopBtn) stopBtn.addEventListener('click', stopPlayback);
+if (saveBtn) saveBtn.addEventListener('click', saveRecording);
 
 document.addEventListener('keydown', (e) => {
-  const meta = e.metaKey || e.ctrlKey;
-
-  if (e.key === 'Enter' && e.shiftKey) {
+  // Shift+Enter → play
+  if (e.shiftKey && e.key === 'Enter') {
     e.preventDefault();
-    if (!playing && !bPlay.disabled) play();
-    return;
+    if (!playing) startPlayback();
   }
+  // Escape → stop
   if (e.key === 'Escape') {
-    if (playing) { e.preventDefault(); stop(); }
-    return;
-  }
-  if (meta && (e.key === 's' || e.key === 'S')) {
     e.preventDefault();
-    if (!bSave.disabled) bSave.click();
-    return;
+    stopPlayback();
+  }
+  // Cmd/Ctrl+S → save recording
+  if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+    e.preventDefault();
+    saveRecording();
   }
 });
+
+// Initial state
+if (stopBtn) stopBtn.disabled = true;
