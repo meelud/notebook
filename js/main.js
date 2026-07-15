@@ -149,8 +149,9 @@ function stopPlayback() {
   playing = false;
   if (playTimeout) { clearTimeout(playTimeout); playTimeout = null; }
   stopAmbient();
-  if (playBtn) playBtn.disabled = false;
+  updatePlayState(); // re-enable play if there's text
   if (stopBtn) stopBtn.disabled = true;
+  if (saveBtn) saveBtn.disabled = (recordedChunks.length === 0);
   if (statusEl) statusEl.textContent = '⏹ Stopped';
   stopRecording();
 }
@@ -221,3 +222,14 @@ document.addEventListener('keydown', (e) => {
 
 // Initial state
 if (stopBtn) stopBtn.disabled = true;
+if (saveBtn) saveBtn.disabled = true;
+
+// Enable play button when there's text
+function updatePlayState() {
+  const text = editor.value || '';
+  if (playBtn) playBtn.disabled = !text.trim();
+}
+if (editor) {
+  editor.addEventListener('input', updatePlayState);
+  updatePlayState(); // check on load
+}
