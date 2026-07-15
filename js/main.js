@@ -25,8 +25,7 @@ const vizBars = vizEl ? [...vizEl.querySelectorAll('.bar')] : [];
 // ──────────────────────────────────────────────────────────────
 let playing = false;
 let playTimeout = null;
-let mediaRecorder = null;
-let recordedChunks = [];
+
 
 // ──────────────────────────────────────────────────────────────
 //  Tokenizer — split text into words + keep punctuation context
@@ -138,6 +137,7 @@ function startPlayback() {
   startAmbient([masterDest]);
 
   // Start recording if MediaRecorder available
+  recSourceText = text;
   startRecording();
   buildRenderOverlay(text);
 
@@ -203,47 +203,176 @@ function stopPlayback() {
   updatePlayState();
   updateWordCount();
   if (stopBtn) stopBtn.disabled = true;
-  if (saveBtn) saveBtn.disabled = (recordedChunks.length === 0);
+  if (saveBtn) saveBtn.disabled = (recLength === 0);
   stopRecording();
 }
 
 // ──────────────────────────────────────────────────────────────
-//  Recording (MediaRecorder → .webm export)
+//  Recording — raw PCM capture → WAV export (zero dependency)
 // ──────────────────────────────────────────────────────────────
+let recProcessor = null;
+let recBuffersL = [];
+let recBuffersR = [];
+let recLength = 0;
+let recSampleRate = 44100;
+let recSourceText = '';
+
 function startRecording() {
   try {
     const ctx = ensureCtx();
-    const dest = ctx.createMediaStreamDestination();
-    getMasterBus().connect(dest);
-    mediaRecorder = new MediaRecorder(dest.stream, { mimeType: 'audio/webm' });
-    recordedChunks = [];
-    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
-    mediaRecorder.start();
+    recSampleRate = ctx.sampleRate;
+    recBuffersL = [];
+    recBuffersR = [];
+    recLength = 0;
+    // ScriptProcessor captures raw stereo PCM from the master bus
+    const bufferSize = 4096;
+    recProcessor = ctx.createScriptProcessor(bufferSize, 2, 2);
+    recProcessor.onaudioprocess = (e) => {
+      const l = e.inputBuffer.getChannelData(0);
+      const r = e.inputBuffer.getChannelData(1);
+      recBuffersL.push(new Float32Array(l));
+      recBuffersR.push(new Float32Array(r));
+      recLength += l.length;
+    };
+    // Tap the master bus into the processor (processor → destination to keep it alive,
+    // but at zero gain so it doesn't double the audio)
+    const silentSink = ctx.createGain();
+    silentSink.gain.value = 0;
+    getMasterBus().connect(recProcessor);
+    recProcessor.connect(silentSink);
+    silentSink.connect(ctx.destination);
   } catch (e) {
-    // MediaRecorder not supported — silent fail
-    mediaRecorder = null;
+    recProcessor = null;
   }
 }
 
 function stopRecording() {
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    mediaRecorder.stop();
+  if (recProcessor) {
+    try {
+      getMasterBus().disconnect(recProcessor);
+      recProcessor.disconnect();
+    } catch (e) {}
+    recProcessor = null;
   }
 }
 
+// Merge chunked Float32 buffers into one
+function mergeBuffers(buffers, len) {
+  const result = new Float32Array(len);
+  let offset = 0;
+  for (const b of buffers) { result.set(b, offset); offset += b.length; }
+  return result;
+}
+
+// Encode stereo PCM Float32 → 16-bit WAV Blob (pure, zero-dependency)
+function encodeWAV(left, right, sampleRate) {
+  const length = left.length + right.length;
+  const buffer = new ArrayBuffer(44 + length * 2);
+  const view = new DataView(buffer);
+  const writeString = (offset, str) => {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  };
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + length * 2, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);       // PCM chunk size
+  view.setUint16(20, 1, true);        // PCM format
+  view.setUint16(22, 2, true);        // stereo
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 4, true); // byte rate (2 ch * 2 bytes)
+  view.setUint16(32, 4, true);        // block align
+  view.setUint16(34, 16, true);       // bits per sample
+  writeString(36, 'data');
+  view.setUint32(40, length * 2, true);
+  // interleave L/R and clamp to 16-bit
+  let offset = 44;
+  for (let i = 0; i < left.length; i++) {
+    let s = Math.max(-1, Math.min(1, left[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true); offset += 2;
+    s = Math.max(-1, Math.min(1, right[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true); offset += 2;
+  }
+  return new Blob([view], { type: 'audio/wav' });
+}
+
+// Build a simple black cover PNG with the text (Canvas, zero-dependency)
+function buildCover(text) {
+  const size = 1000;
+  const canvas = document.createElement('canvas');
+  canvas.width = size; canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  // black background
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0, 0, size, size);
+  // text style — iPhone-like system font
+  ctx.fillStyle = '#f2f2f2';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const isRTL = /[\u0600-\u06FF]/.test(text);
+  ctx.direction = isRTL ? 'rtl' : 'ltr';
+  // fit text: wrap into lines, shrink font to fit
+  const clean = text.trim().replace(/\s+/g, ' ');
+  let fontSize = 64;
+  const maxWidth = size * 0.82;
+  const maxHeight = size * 0.82;
+  function wrapLines(fs) {
+    ctx.font = `500 ${fs}px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif`;
+    const words = clean.split(' ');
+    const lines = [];
+    let line = '';
+    for (const w of words) {
+      const test = line ? line + ' ' + w : w;
+      if (ctx.measureText(test).width > maxWidth && line) { lines.push(line); line = w; }
+      else line = test;
+    }
+    if (line) lines.push(line);
+    return lines;
+  }
+  let lines = wrapLines(fontSize);
+  while ((lines.length * fontSize * 1.4) > maxHeight && fontSize > 18) {
+    fontSize -= 4;
+    lines = wrapLines(fontSize);
+  }
+  ctx.font = `500 ${fontSize}px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif`;
+  const lineH = fontSize * 1.4;
+  const startY = size / 2 - ((lines.length - 1) * lineH) / 2;
+  lines.forEach((ln, i) => ctx.fillText(ln, size / 2, startY + i * lineH));
+  return canvas;
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function slugFromText(text) {
+  const s = (text || '').trim().replace(/\s+/g, '-').slice(0, 24).replace(/[^\p{L}\p{N}-]/gu, '');
+  return s || 'notebook';
+}
+
 function saveRecording() {
-  if (recordedChunks.length === 0) {
+  if (recLength === 0) {
     if (wcEl) wcEl.textContent = '⚠ nothing recorded';
     setTimeout(updateWordCount, 2000);
     return;
   }
-  const blob = new Blob(recordedChunks, { type: 'audio/webm' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `notebook-${Date.now()}.webm`;
-  a.click();
-  URL.revokeObjectURL(url);
+  const left = mergeBuffers(recBuffersL, recLength);
+  const right = mergeBuffers(recBuffersR, recLength);
+  const wavBlob = encodeWAV(left, right, recSampleRate);
+  const base = `notebook-${slugFromText(recSourceText)}`;
+  downloadBlob(wavBlob, `${base}.wav`);
+  // cover art PNG
+  try {
+    const cover = buildCover(recSourceText);
+    cover.toBlob((pngBlob) => {
+      if (pngBlob) downloadBlob(pngBlob, `${base}-cover.png`);
+    }, 'image/png');
+  } catch (e) {}
   if (wcEl) wcEl.textContent = '💾 saved!';
   setTimeout(updateWordCount, 2000);
 }
