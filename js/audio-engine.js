@@ -654,14 +654,10 @@ export function playWord(word, sentenceType, progress, punctBefore, wordLen) {
     dest = getMasterBus();
   }
 
-  // Task 8: intelligent silence (musical breath)
-  // Only check silence here if punctBefore is non-null (main.js handles it separately)
-  if (punctBefore) {
-    const silence = getSilenceDuration(punctBefore, 0, 1);
-    if (silence > 0) {
-      return { played: false, silenceDur: silence };
-    }
-  }
+  // NOTE: silence/breath is handled entirely by the caller (main.js) BEFORE
+  // calling playWord. We must NOT re-check it here, otherwise a word that
+  // follows any punctuation (comma, etc.) would get swallowed / muted.
+  // playWord always plays its note.
 
   // Select voice from group
   const group = VOICE_GROUPS[sentenceType] || VOICE_GROUPS.statement;

@@ -509,6 +509,9 @@ function updatePlayState() {
 }
 if (editor) {
   editor.addEventListener('input', () => {
+    // If the user edits the text mid-playback, stop — the audio no longer
+    // matches what's on screen, so continuing would be confusing.
+    if (playing) stopPlayback();
     updatePlayState();
     updateWordCount();
   });
