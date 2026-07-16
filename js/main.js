@@ -407,18 +407,46 @@ function saveRecording() {
 //  iOS / Mobile: unlock AudioContext on first user interaction
 // ──────────────────────────────────────────────────────────────
 let audioUnlocked = false;
+
+// A tiny silent looping <audio> element. Playing a real HTMLMediaElement forces
+// iOS to route the page's audio into the "playback" (media) category instead of
+// the "ambient" one — so sound plays even when the ring/silent switch is OFF.
+let silentMediaEl = null;
+function ensureSilentMedia() {
+  if (silentMediaEl) return silentMediaEl;
+  const el = document.createElement('audio');
+  el.setAttribute('playsinline', '');
+  el.setAttribute('webkit-playsinline', '');
+  el.loop = true;
+  // 0.1s of silent WAV, base64-encoded (mono, 8kHz) — tiny, zero network cost
+  el.src = 'data:audio/wav;base64,UklGRjIAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQ4AAAAAAAAAAAAAAAAAAAAAAA==';
+  el.volume = 0.001;
+  document.body.appendChild(el);
+  silentMediaEl = el;
+  return el;
+}
+
 function unlockAudio() {
   if (audioUnlocked) return;
   const ctx = ensureCtx();
   if (ctx.state === 'suspended') ctx.resume();
-  // Create a silent buffer and play it to unlock on iOS Safari
+  // Unlock the Web Audio context with a silent buffer
   const silent = ctx.createBuffer(1, 1, ctx.sampleRate);
   const src = ctx.createBufferSource();
   src.buffer = silent;
   src.connect(ctx.destination);
   src.start();
+  // Force iOS into "playback" audio category so the silent switch doesn't mute us
+  try {
+    const el = ensureSilentMedia();
+    const p = el.play();
+    if (p && p.catch) p.catch(() => {});
+  } catch (e) {}
+  // Modern iOS also exposes the AudioSession API — set it to "playback" if available
+  try {
+    if (navigator.audioSession) navigator.audioSession.type = 'playback';
+  } catch (e) {}
   audioUnlocked = true;
-  // Remove listeners after unlock
   ['touchstart', 'touchend', 'mousedown', 'keydown'].forEach(evt => {
     document.removeEventListener(evt, unlockAudio, { capture: true });
   });
