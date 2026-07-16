@@ -1,4 +1,5 @@
 // ── Mood-derived scale ────────────────────────────────────────
+import { FA_LEXICON, FA_LEXICON_EXTRA } from './lexicon-fa.js';
 // Pure-data + pure-function module: no runtime audio state.
 // Data tables, emotion lexicon, and deterministic helper functions.
 // Each piece of text gets its OWN scale, chosen from its mood — not
@@ -252,6 +253,28 @@ export const EMOTION_LEXICON = {
   ]},
 };
 
+// ── Merge the extended Persian lexicon into EMOTION_LEXICON ────
+// The Persian words live in a separate file (lexicon-fa.js) to keep this
+// module lean. They are appended to the matching category's `words` array
+// here — BEFORE WORD_LOOKUP is built — so they inherit that category's
+// weight/tense and are picked up automatically by every downstream helper.
+// De-duplicated so a word already present isn't counted twice.
+(function mergePersianLexicon() {
+  const sources = [FA_LEXICON, FA_LEXICON_EXTRA];
+  for (const src of sources) {
+    for (const category in src) {
+      if (!EMOTION_LEXICON[category]) continue; // skip unknown categories defensively
+      const existing = new Set(EMOTION_LEXICON[category].words);
+      for (const word of src[category]) {
+        if (!existing.has(word)) {
+          EMOTION_LEXICON[category].words.push(word);
+          existing.add(word);
+        }
+      }
+    }
+  }
+})();
+
 // ── Context-aware modifiers (EN + FA) ─────────────────────────
 // Negators flip the polarity of the emotion words that follow them within a
 // short scope; intensifiers/diminishers scale their magnitude. This is what
@@ -452,7 +475,11 @@ export const WORD_LOOKUP = (() => {
 // so a Persian negator must also flip the emotion words BEFORE it, not just after.
 const PERSIAN_NEGATORS = new Set([
   'نه','نیست','نبود','نیستم','نبودم','نداره','ندارم','نداشت','هیچ','هیچی',
-  'هیچوقت','هرگز','نمی','نمیشه','نمیشد','نکن','نکردم','اصلا','اصلاً','ابدا','ابداً',
+  'هیچوقت','هرگز','نمی','نمیشه','نمیشد','نکن','نکردم',
+  // NOTE: 'اصلا'/'ابدا' are NOT listed here. They are emphasis particles that
+  // almost always co-occur with a real negator ("اصلا خوب نیست"). Treating them
+  // as independent negators caused a double-negation that cancelled out. They
+  // are handled as negation-emphasis intensifiers instead (see INTENSIFIERS).
 ]);
 const hasPersian = (w) => /[ا-یآ]/.test(w);
 
