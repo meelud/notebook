@@ -1,7 +1,7 @@
 import { hashText } from './mood.js';
 import {
-  ac, seedRng, VOICES, playWord, setMood, wordNoteScale,
-  startAmbient, stopAmbient, isAmbientRunning, ensureCtx, getMasterBus,
+  seedRng, playWord, setMood,
+  startAmbient, stopAmbient, ensureCtx, getMasterBus,
   getSilenceDuration, rnd,
 } from './audio-engine.js';
 
@@ -70,22 +70,30 @@ function detectSentenceType(text) {
 // ──────────────────────────────────────────────────────────────
 let wordSpans = [];
 
-function buildRenderOverlay(text) {
+// Build the highlight overlay from the SAME tokens the playback loop uses,
+// so highlight index and played-word index stay perfectly in sync.
+function buildRenderOverlay(text, tokens) {
   if (!renderEl) return;
-  // Split text preserving whitespace for display
-  const parts = text.split(/(\s+)/);
   renderEl.innerHTML = '';
   wordSpans = [];
-  for (const part of parts) {
-    if (/^\s+$/.test(part)) {
-      // Preserve whitespace as text node
-      renderEl.appendChild(document.createTextNode(part));
-    } else if (part) {
-      const span = document.createElement('span');
-      span.textContent = part;
-      renderEl.appendChild(span);
-      wordSpans.push(span);
+  let cursor = 0;
+  for (const tok of tokens) {
+    // find this token's word in the original text starting from cursor,
+    // emitting any in-between text (spaces/punctuation) as plain nodes
+    const at = text.indexOf(tok.word, cursor);
+    if (at === -1) continue;
+    if (at > cursor) {
+      renderEl.appendChild(document.createTextNode(text.slice(cursor, at)));
     }
+    const span = document.createElement('span');
+    span.textContent = tok.word;
+    renderEl.appendChild(span);
+    wordSpans.push(span);
+    cursor = at + tok.word.length;
+  }
+  // trailing text (final punctuation etc.)
+  if (cursor < text.length) {
+    renderEl.appendChild(document.createTextNode(text.slice(cursor)));
   }
   renderEl.style.display = 'block';
   if (editor) editor.style.color = 'transparent';
@@ -136,14 +144,13 @@ function startPlayback() {
   const masterDest = getMasterBus();
   startAmbient([masterDest]);
 
-  // Start recording if MediaRecorder available
+  // Start capturing audio for WAV export
   recSourceText = text;
   startRecording();
-  buildRenderOverlay(text);
+  buildRenderOverlay(text, tokens);
 
   // Play words one by one with timing
   let idx = 0;
-  let wordHighlightIdx = 0;
   function playNext() {
     if (!playing || idx >= tokens.length) {
       // Let ambient ring out for a moment then stop
@@ -164,7 +171,7 @@ function startPlayback() {
         // Now play the actual word after the breath
         if (!playing) return;
         const result = playWord(token.word, sentenceType, progress, null, token.len);
-        highlightWord(wordHighlightIdx++);
+        highlightWord(idx - 1);
         const wordDur = result.duration || 0.4;
         // Base timing between words
         const gap = wordDur * rnd(0.5, 0.8) + 0.05;
@@ -177,7 +184,7 @@ function startPlayback() {
     const result = playWord(token.word, sentenceType, progress, token.punctBefore, token.len);
 
     if (result.played) {
-      highlightWord(wordHighlightIdx++);
+      highlightWord(idx);
       const wordDur = result.duration || 0.4;
       const gap = wordDur * rnd(0.4, 0.7) + 0.03;
       idx++;
@@ -400,9 +407,6 @@ function saveRecording() {
   setTimeout(updateWordCount, 2000);
 }
 
-// ──────────────────────────────────────────────────────────────
-//  Event Listeners & Keyboard Shortcuts
-// ──────────────────────────────────────────────────────────────
 // ──────────────────────────────────────────────────────────────
 //  iOS / Mobile: unlock AudioContext on first user interaction
 // ──────────────────────────────────────────────────────────────
