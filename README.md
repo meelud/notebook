@@ -1,47 +1,47 @@
 # notebook
 
-هر چی بنویسی رو تبدیل می‌کنه به یه قطعه موسیقی آمبینت که همون لحظه ساخته می‌شه. متنت که کلمه‌به‌کلمه خونده می‌شه، یه موسیقی زنده باهاش کوک می‌شه — هیچ صدای ضبط‌شده‌ای در کار نیست، همه‌چیز از صفر توی مرورگر با **Web Audio API** ساخته می‌شه.
+Type anything. Hear it become music.
 
-## چطوری کار می‌کنه؟
+**notebook** turns whatever you write into a piece of ambient music, synthesized live in your browser as each word is read. No samples, no recordings — every sound is built from scratch with the **Web Audio API**. Same text always makes the same piece; change a word and you get something completely new.
 
-- **حال متن → گام موسیقی.** یه فرهنگ لغتِ احساسی دوزبانه (فارسی/انگلیسی) متنت رو می‌خونه و حال‌وهواش رو می‌ذاره روی یکی از ۹ گام موسیقایی — از تاریک (مینور، لوکرین، فریجین…) تا روشن (لیدین، ماژور). نقطه‌گذاری هم حال‌وهوا رو یه کم جابه‌جا می‌کنه.
-- **هر متن، صدای خودش.** یه مولد عدد تصادفی seed‌دار (mulberry32) هر بار از روی هشِ دقیقِ متنت دوباره seed می‌شه. یعنی **یه متن ثابت همیشه همون قطعه رو می‌سازه** — همون گام، همون ملودی، همون صداها، همون ریتم — ولی متن متفاوت یه چیز کاملاً تازه.
-- **۲۲ تا صدای ساختگی.** پد، پلاک، نفس، زنگ، پیانو، ماریمبا، کر، ویولنسل، کالیمبا، گونگ و کلی چیز دیگه — هر کدوم از دل اسیلاتور و فیلتر و پاکت صدا ساخته شدن. نوع جمله (خبری / سوالی / تعجبی) تعیین می‌کنه کدوم دسته صدا پخش بشه.
-- **بستر آمبینتِ همیشگی.** یه لایه‌ی آمبینت با الهام از Aphex Twin (پد، پالسِ بم، موتیف، گرمای نوار) که همه‌ش روی یه کلاکِ کندِ ~۵۲ BPM قفل شده. هرچی به آخر متن نزدیک می‌شی، پُرتر و متراکم‌تر می‌شه.
-- **ضبط و ذخیره.** صدای پخش‌شده با `MediaRecorder` ضبط می‌شه و می‌تونی به شکل یه فایل `.webm` ذخیره‌ش کنی.
+👉 **[Try it live](https://meelud.github.io/notebook/)**
 
-## اجراش کن
+## How it works
 
-یه سایت استاتیکه — نه build می‌خواد، نه هیچ وابستگی‌ای.
+- **Your words set the mood.** A bilingual (English + Persian) emotion lexicon reads your text and maps its feeling onto one of a dozen musical scales — dark (minor, locrian, phrygian…) to bright (lydian, major). Punctuation nudges the vibe, and negation is handled properly (yes, "not happy" and «خوشحال نیستم» both land where they should).
+- **Deterministic by design.** A seeded RNG (mulberry32) is re-seeded from a hash of your exact text. So a given text is *always* the same song — same scale, melody, voices, rhythm. It's reproducible, not random.
+- **22 hand-built synth voices.** Pads, plucks, breaths, bells, piano, marimba, choir, cello, kalimba, gong and more — each carved out of oscillators, filters and envelopes. The sentence type (statement / question / exclamation) picks which family sings.
+- **An ambient bed that breathes.** A slow ~52 BPM Aphex-Twin-ish drone/tape layer runs underneath and thickens toward the end of your text. Notes move stepwise for melodic continuity, silence falls on commas and full stops, and everything sits in a gently panned stereo field through a soft master compressor.
+- **Save it.** Records straight to a `.wav` and drops a matching black cover-art `.png` with your text on it.
 
-- یا مستقیم `index.html` رو توی یه مرورگر امروزی باز کن،
-- یا کل پوشه رو با یه سرور استاتیک بالا بیار، مثلاً:
+## Run it locally
+
+Static site. No build, no dependencies, nothing to install.
 
 ```sh
 python3 -m http.server
 ```
 
-بعدش برو سراغ آدرس لوکالی که چاپ می‌کنه.
+Then open the local URL it prints. (Serve over `http://` rather than `file://` so the ES modules load cleanly.)
 
-> از ES module استفاده می‌کنه، برای همین بهتره روی `http://` سرو بشه تا `file://` که ماژول‌ها مطمئن‌تر لود بشن.
-
-## چی به چیه
+## What's where
 
 ```
-index.html          – مارک‌آپ و لینک فونت‌ها؛ styles.css و js/main.js رو لود می‌کنه
-styles.css          – همه‌ی استایل‌ها
+index.html          – markup + fonts; loads styles.css and js/main.js
+styles.css          – all the styling
 js/
-  mood.js           – فرهنگ لغت احساسی، جدول گام‌ها، detectMood، هش کردن
-  audio-engine.js   – RNG با seed، ۲۲ صدا، ریورب، نقطه‌گذاری، موتور آمبینت
-  main.js           – سیم‌کشی UI، توکنایزر، حلقه‌ی پخش، ذخیره/خروجی، کلیدهای میان‌بر
+  mood.js           – emotion detection, scales, hashing (pure, no audio)
+  lexicon-fa.js     – the extended Persian emotion lexicon
+  audio-engine.js   – seeded RNG, 22 voices, reverb, ambient engine
+  main.js           – UI, tokenizer, playback loop, WAV/cover export, shortcuts
 ```
 
-## کلیدهای میان‌بر
+## Shortcuts
 
-- `⇧ + Enter` — پخش
-- `Esc` — توقف
-- `⌘ + S` — ذخیره‌ی ضبط
+- `⇧ + Enter` — play
+- `Esc` — stop
+- `⌘ + S` — save recording
 
-## لایسنس
+## License
 
-MIT — به [LICENSE](LICENSE) نگاه کن.
+MIT — see [LICENSE](LICENSE).
