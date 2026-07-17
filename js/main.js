@@ -76,6 +76,10 @@ function buildRenderOverlay(text, tokens) {
   if (!renderEl) return;
   renderEl.innerHTML = '';
   wordSpans = [];
+  // Mirror the editor's resolved text direction onto the overlay so RTL
+  // (Persian) text flows right-to-left and lines up with the textarea.
+  const isRTL = /[\u0600-\u06FF\u0750-\u077F]/.test(text);
+  renderEl.setAttribute('dir', isRTL ? 'rtl' : 'ltr');
   let cursor = 0;
   for (const tok of tokens) {
     // find this token's word in the original text starting from cursor,
@@ -88,7 +92,8 @@ function buildRenderOverlay(text, tokens) {
     }
     const span = document.createElement('span');
     span.textContent = tok.word;
-    span.style.display = 'inline-block'; // Protects word bounds during RTL layout wrap
+    // NOTE: plain inline (not inline-block) so words follow the natural
+    // bidi flow — inline-block was forcing left-to-right word order on RTL text.
     renderEl.appendChild(span);
     wordSpans.push(span);
     cursor = at + tok.word.length;
@@ -624,14 +629,27 @@ function updatePlayState() {
   const text = editor ? (editor.value || '') : '';
   if (playBtn) playBtn.disabled = !text.trim();
 }
+// Set the textarea's text direction from its content. CSS `direction: auto`
+// is unreliable on <textarea>; the HTML `dir="auto"` attribute (or an explicit
+// rtl/ltr) is the correct, cross-browser way. Persian text → RTL.
+function updateEditorDir() {
+  if (!editor) return;
+  const t = editor.value || '';
+  const isRTL = /[\u0600-\u06FF\u0750-\u077F]/.test(t);
+  editor.setAttribute('dir', isRTL ? 'rtl' : 'ltr');
+}
+
 if (editor) {
+  editor.setAttribute('dir', 'auto'); // sensible default before any input
   editor.addEventListener('input', () => {
     // If the user edits the text mid-playback, stop — the audio no longer
     // matches what's on screen, so continuing would be confusing.
     if (playing) stopPlayback();
+    updateEditorDir();
     updatePlayState();
     updateWordCount();
   });
+  updateEditorDir();
   updatePlayState();
   updateWordCount();
 }
