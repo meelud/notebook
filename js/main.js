@@ -2,7 +2,7 @@ import { hashText } from './mood.js';
 import {
   seedRng, playWord, setMood,
   startAmbient, stopAmbient, ensureCtx, getMasterBus,
-  getSilenceDuration, rnd,
+  getSilenceDuration, rnd, clearNoiseCache,
 } from './audio-engine.js';
 
 // ──────────────────────────────────────────────────────────────
@@ -214,7 +214,14 @@ function stopPlayback() {
   if (stopBtn) stopBtn.disabled = true;
   if (saveBtn) saveBtn.disabled = (recLength === 0);
   stopRecording();
+  // Free cached noise buffers so a long session doesn't hold RAM between plays.
+  clearNoiseCache();
 }
+
+// Mobile: when the tab goes to the background, release cached audio RAM.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) clearNoiseCache();
+});
 
 // ──────────────────────────────────────────────────────────────
 //  Recording — raw PCM capture → WAV export (zero dependency)

@@ -40,22 +40,241 @@ function rnd(a = 0, b = 1) { return _rng() * (b - a) + a; }
 function pick(arr) { return arr[Math.floor(_rng() * arr.length)]; }
 function chance(p) { return _rng() < p; }
 
-// ──────────────────────────────────────────────────────────────
-//  Shared Noise Buffer Cache — Optimization for GC and Speed
-// ──────────────────────────────────────────────────────────────
-const noiseCache = {};
-function getOrCreateNoiseBuffer(key, dur, generatorFn) {
-  const c = ensureCtx();
-  // Safe caching by rounding duration to avoid near-duplicate keys
-  const roundedDur = Math.round(dur * 10) / 10;
-  const cacheKey = `${key}_${roundedDur}_${c.sampleRate}`;
-  if (noiseCache[cacheKey]) return noiseCache[cacheKey];
+// ═══════════════════════════════════════════════════════════════
+//  Noise Buffer Cache — Production-Grade LRU with Memory Pressure
+// ═══════════════════════════════════════════════════════════════
 
-  const bufLen = c.sampleRate * dur;
-  const buf = c.createBuffer(1, bufLen, c.sampleRate);
+/**
+ * @typedef {Object} CacheEntry
+ * @property {AudioBuffer} buffer — the cached audio buffer
+ * @property {number} byteSize — approximate memory footprint in bytes
+ * @property {number} lastAccess — timestamp from performance.now()
+ * @property {number} hitCount — cache hit counter for analytics
+ */
+
+/** @type {Map<string, CacheEntry>} */
+const noiseCache = new Map();
+
+/** @type {number} — max entries before LRU eviction */
+const MAX_CACHE_ENTRIES = 50;
+
+/**
+ * @type {number} — max approximate bytes before aggressive cleanup.
+ * Adaptive: 64MB for mobile, 128MB for desktop (detected by screen width heuristic).
+ */
+const MAX_CACHE_BYTES = (typeof window !== 'undefined' && window.innerWidth < 768)
+  ? 64 * 1024 * 1024   // Mobile: conservative
+  : 128 * 1024 * 1024; // Desktop: generous
+
+/** @type {number} — current approximate byte size of all cached buffers */
+let currentCacheBytes = 0;
+
+/** @type {boolean} — enable verbose logging in development only */
+const DEBUG_CACHE = (() => {
+  try {
+    return typeof location !== 'undefined' &&
+           (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
+  } catch (e) {
+    return false;
+  }
+})();
+
+/**
+ * Calculate approximate byte size of an AudioBuffer.
+ * Float32 = 4 bytes per sample × channels × length.
+ * @param {AudioBuffer} buf
+ * @returns {number}
+ */
+function estimateBufferBytes(buf) {
+  return buf.length * buf.numberOfChannels * 4;
+}
+
+/**
+ * Evict the oldest entry (LRU) and update byte tracking.
+ * @returns {boolean} — true if an entry was evicted
+ */
+function evictLRU() {
+  if (noiseCache.size === 0) return false;
+
+  const oldestKey = noiseCache.keys().next().value;
+  const entry = noiseCache.get(oldestKey);
+
+  noiseCache.delete(oldestKey);
+  currentCacheBytes -= entry.byteSize;
+
+  if (DEBUG_CACHE) {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[🔴 Cache Evict] key: "${oldestKey}", ` +
+      `freed: ${(entry.byteSize / 1024).toFixed(1)}KB, ` +
+      `remaining: ${noiseCache.size} entries`
+    );
+  }
+
+  return true;
+}
+
+/**
+ * Aggressive cleanup: remove entries until we're under the byte limit.
+ * Removes 25% of entries (oldest first) in one batch for efficiency.
+ */
+function evictUnderPressure() {
+  const targetCount = Math.floor(noiseCache.size * 0.75); // keep 75%
+  let evicted = 0;
+
+  while (noiseCache.size > targetCount && noiseCache.size > 0) {
+    if (evictLRU()) evicted++;
+  }
+
+  if (DEBUG_CACHE && evicted > 0) {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[⚠️ Memory Pressure] Evicted ${evicted} entries, ` +
+      `${noiseCache.size} remaining, ` +
+      `${(currentCacheBytes / 1024 / 1024).toFixed(2)}MB used`
+    );
+  }
+}
+
+/**
+ * Memory pressure monitoring (Chrome-only, guarded).
+ * Checks heap usage every 10 seconds and triggers cleanup if >80%.
+ */
+(function setupMemoryPressure() {
+  if (typeof performance === 'undefined' || !performance.memory) return;
+
+  const CHECK_INTERVAL = 10000;
+
+  setInterval(() => {
+    try {
+      const used = performance.memory.usedJSHeapSize;
+      const total = performance.memory.totalJSHeapSize;
+      const ratio = used / total;
+
+      // If heap usage > 80%, trigger cache cleanup
+      if (ratio > 0.8 && noiseCache.size > 10) {
+        if (DEBUG_CACHE) {
+          // eslint-disable-next-line no-console
+          console.log(`[🚨 Heap Pressure] ${(ratio * 100).toFixed(1)}% used`);
+        }
+        evictUnderPressure();
+      }
+    } catch (e) {
+      // Silently fail if memory API becomes unavailable
+    }
+  }, CHECK_INTERVAL);
+})();
+
+/**
+ * Get or create a noise buffer. LRU eviction prevents unbounded growth.
+ *
+ * @param {string} key — noise type (e.g. 'breath', 'wind')
+ * @param {number} dur — duration in seconds
+ * @param {function(Float32Array, number): void} generatorFn — fills the buffer
+ * @returns {AudioBuffer}
+ */
+function getOrCreateNoiseBuffer(key, dur, generatorFn) {
+  const ctx = ensureCtx();
+
+  // Round duration to 0.1s to avoid near-duplicate keys
+  const roundedDur = Math.round(dur * 10) / 10;
+  const cacheKey = `${key}_${roundedDur}_${ctx.sampleRate}`;
+
+  // ── Cache Hit: promote to MRU position ──
+  const existing = noiseCache.get(cacheKey);
+  if (existing) {
+    // Move to end (most-recently-used) by re-inserting
+    noiseCache.delete(cacheKey);
+    existing.lastAccess = performance.now();
+    existing.hitCount++;
+    noiseCache.set(cacheKey, existing);
+
+    if (DEBUG_CACHE && existing.hitCount === 1) {
+      // eslint-disable-next-line no-console
+      console.log(`[🟢 Cache Hit] ${cacheKey} (hits: ${existing.hitCount})`);
+    }
+
+    return existing.buffer;
+  }
+
+  // ── Cache Miss: generate new buffer ──
+  // Using Math.ceil to ensure integer sample count (Web Audio API requirement)
+  const bufLen = Math.ceil(ctx.sampleRate * dur);
+  const buf = ctx.createBuffer(1, bufLen, ctx.sampleRate);
   generatorFn(buf.getChannelData(0), bufLen);
-  noiseCache[cacheKey] = buf;
+
+  const byteSize = estimateBufferBytes(buf);
+
+  // ── Evict if at capacity (bytes or entries) ──
+  while (
+    (noiseCache.size >= MAX_CACHE_ENTRIES ||
+     currentCacheBytes + byteSize > MAX_CACHE_BYTES) &&
+    noiseCache.size > 0
+  ) {
+    evictLRU();
+  }
+
+  // ── Insert new entry ──
+  /** @type {CacheEntry} */
+  const entry = {
+    buffer: buf,
+    byteSize,
+    lastAccess: performance.now(),
+    hitCount: 0,
+  };
+
+  noiseCache.set(cacheKey, entry);
+  currentCacheBytes += byteSize;
+
+  if (DEBUG_CACHE) {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[🔵 Cache Miss] ${cacheKey}, ` +
+      `size: ${(byteSize / 1024).toFixed(1)}KB, ` +
+      `entries: ${noiseCache.size}, ` +
+      `total: ${(currentCacheBytes / 1024 / 1024).toFixed(2)}MB`
+    );
+  }
+
   return buf;
+}
+
+/**
+ * Manually clear the entire cache. Useful for:
+ * - Long-running sessions (hours)
+ * - Memory debugging
+ * - Before recording (clean state)
+ * - After playback stops
+ */
+export function clearNoiseCache() {
+  const count = noiseCache.size;
+  const bytes = currentCacheBytes;
+
+  noiseCache.clear();
+  currentCacheBytes = 0;
+
+  if (DEBUG_CACHE && count > 0) {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[🗑️ Cache Clear] ${count} entries, ` +
+      `${(bytes / 1024 / 1024).toFixed(2)}MB freed`
+    );
+  }
+}
+
+/**
+ * Get cache statistics for debugging/monitoring.
+ * @returns {{entries: number, bytes: number, bytesFormatted: string, maxEntries: number, maxBytes: number, maxBytesFormatted: string}}
+ */
+export function getNoiseCacheStats() {
+  return {
+    entries: noiseCache.size,
+    bytes: currentCacheBytes,
+    bytesFormatted: `${(currentCacheBytes / 1024 / 1024).toFixed(2)}MB`,
+    maxEntries: MAX_CACHE_ENTRIES,
+    maxBytes: MAX_CACHE_BYTES,
+    maxBytesFormatted: `${(MAX_CACHE_BYTES / 1024 / 1024).toFixed(0)}MB`,
+  };
 }
 
 // ──────────────────────────────────────────────────────────────
