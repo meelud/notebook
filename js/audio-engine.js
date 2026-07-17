@@ -11,7 +11,6 @@ function ensureCtx() {
 }
 
 // ── Master Bus: Compressor → Destination ──
-// Task 4: gentle transparent compressor to tame peaks without squashing dynamics
 let masterComp, masterGain;
 function getMasterBus() {
   if (masterComp) return masterGain;
@@ -40,6 +39,24 @@ export function seedRng(seed) {
 function rnd(a = 0, b = 1) { return _rng() * (b - a) + a; }
 function pick(arr) { return arr[Math.floor(_rng() * arr.length)]; }
 function chance(p) { return _rng() < p; }
+
+// ──────────────────────────────────────────────────────────────
+//  Shared Noise Buffer Cache — Optimization for GC and Speed
+// ──────────────────────────────────────────────────────────────
+const noiseCache = {};
+function getOrCreateNoiseBuffer(key, dur, generatorFn) {
+  const c = ensureCtx();
+  // Safe caching by rounding duration to avoid near-duplicate keys
+  const roundedDur = Math.round(dur * 10) / 10;
+  const cacheKey = `${key}_${roundedDur}_${c.sampleRate}`;
+  if (noiseCache[cacheKey]) return noiseCache[cacheKey];
+
+  const bufLen = c.sampleRate * dur;
+  const buf = c.createBuffer(1, bufLen, c.sampleRate);
+  generatorFn(buf.getChannelData(0), bufLen);
+  noiseCache[cacheKey] = buf;
+  return buf;
+}
 
 // ──────────────────────────────────────────────────────────────
 //  Reverb — Task 3: dark warm reverb (LP-filtered noise buffer)
@@ -82,8 +99,8 @@ function buildReverb() {
 const MAX_POLY = 4; // max simultaneous word-triggered notes
 const activeVoices = []; // { gainNode, startTime, release() }
 
-function registerVoice(gainNode, releaseTime) {
-  const entry = { gainNode, startTime: ac.currentTime, releaseTime };
+function registerVoice(gainNode, releaseTime, extraNodes = []) {
+  const entry = { gainNode, startTime: ac.currentTime, releaseTime, extraNodes };
   activeVoices.push(entry);
   // if over polyphony limit, fade out oldest voice
   while (activeVoices.length > MAX_POLY) {
@@ -93,6 +110,13 @@ function registerVoice(gainNode, releaseTime) {
       oldest.gainNode.gain.cancelScheduledValues(now);
       oldest.gainNode.gain.setValueAtTime(oldest.gainNode.gain.value, now);
       oldest.gainNode.gain.exponentialRampToValueAtTime(0.0001, now + 0.15);
+      // Disconnect connections gently after fade out complete
+      setTimeout(() => {
+        try { oldest.gainNode.disconnect(); } catch (e) {}
+        if (oldest.extraNodes) {
+          oldest.extraNodes.forEach(node => { try { node.disconnect(); } catch(e){} });
+        }
+      }, 200);
     } catch(e) {}
   }
 }
@@ -132,7 +156,6 @@ function stepwiseNoteIndex(scaleLen) {
 // ──────────────────────────────────────────────────────────────
 //  Silence / Breath — Task 8: Musical rests
 // ──────────────────────────────────────────────────────────────
-// Returns a silence duration in seconds (0 = no silence). Called before each word.
 export function getSilenceDuration(punctBefore, wordIndex, totalWords) {
   // After paragraph break / double newline: long breath
   if (punctBefore && /(\n\s*\n|\.{3,})/.test(punctBefore)) return rnd(1.2, 2.0);
@@ -146,39 +169,35 @@ export function getSilenceDuration(punctBefore, wordIndex, totalWords) {
 }
 
 // ──────────────────────────────────────────────────────────────
-//  22 Voices (UNTOUCHED synthesis logic — only routing changed)
+//  22 Voices (Optimized Synthesis Core under Golden Rule)
 // ──────────────────────────────────────────────────────────────
 export const VOICES = {
   pad(f, dur, vol, dest, wordLen) {
     const c = ac;
     const osc = c.createOscillator(), g = c.createGain();
-    // Task 6: reduced detune for melodic voices (centered, less phasing)
     osc.detune.value = rnd(-4, 4);
     osc.type = 'sine';
     osc.frequency.value = f;
-    // Task 5: humanize — longer words get softer attack
     const attackTime = 0.05 + Math.min(wordLen || 4, 10) * 0.012;
     const peakVol = vol * rnd(0.85, 1.0);
     g.gain.setValueAtTime(0, c.currentTime);
     g.gain.linearRampToValueAtTime(peakVol, c.currentTime + attackTime);
     g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur);
-    // Task 3: gentle highpass to keep low-end clean (non-bass voices)
     const hp = c.createBiquadFilter();
     hp.type = 'highpass';
     hp.frequency.value = f > 300 ? 90 : 30; // only filter non-bass notes
     osc.connect(hp); hp.connect(g);
     g.connect(reverbNode); g.connect(dest);
     osc.start(); osc.stop(c.currentTime + dur + 0.1);
-    // Task 7: explicit cleanup
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur);
+    registerVoice(g, c.currentTime + dur, [osc, hp]);
     return dur;
   },
 
   pluck(f, dur, vol, dest, wordLen) {
     const c = ac;
     const osc = c.createOscillator(), g = c.createGain();
-    osc.detune.value = rnd(-3, 3); // Task 6: tighter detune
+    osc.detune.value = rnd(-3, 3);
     osc.type = 'triangle';
     osc.frequency.value = f;
     const peakVol = vol * rnd(0.8, 1.0);
@@ -190,20 +209,19 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     osc.start(); osc.stop(c.currentTime + dur + 0.05);
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur);
+    registerVoice(g, c.currentTime + dur, [osc, hp]);
     return dur * 0.7;
   },
 
   breath(f, dur, vol, dest, wordLen) {
     const c = ac;
-    const bufLen = c.sampleRate * dur;
-    const buf = c.createBuffer(1, bufLen, c.sampleRate);
-    const data = buf.getChannelData(0);
-    let prev = 0;
-    for (let i = 0; i < bufLen; i++) {
-      prev = prev * 0.85 + (Math.random() * 2 - 1) * 0.15;
-      data[i] = prev * (1 - i / bufLen);
-    }
+    const buf = getOrCreateNoiseBuffer('breath', dur, (data, bufLen) => {
+      let prev = 0;
+      for (let i = 0; i < bufLen; i++) {
+        prev = prev * 0.85 + (Math.random() * 2 - 1) * 0.15;
+        data[i] = prev * (1 - i / bufLen);
+      }
+    });
     const src = c.createBufferSource(), g = c.createGain();
     const bp = c.createBiquadFilter();
     bp.type = 'bandpass'; bp.frequency.value = f * 1.5; bp.Q.value = 1.5;
@@ -215,6 +233,7 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     src.start(); src.stop(c.currentTime + dur + 0.05);
     src.onended = () => { try { src.disconnect(); g.disconnect(); bp.disconnect(); } catch(e){} };
+    registerVoice(g, c.currentTime + dur, [src, bp]);
     return dur;
   },
 
@@ -223,7 +242,7 @@ export const VOICES = {
     const osc = c.createOscillator(), g = c.createGain();
     osc.type = 'sine';
     osc.frequency.value = f * 2;
-    osc.detune.value = rnd(-5, 5); // Task 6
+    osc.detune.value = rnd(-5, 5);
     const peakVol = vol * 0.5 * rnd(0.85, 1.0);
     g.gain.setValueAtTime(peakVol, c.currentTime);
     g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur * 1.5);
@@ -233,7 +252,7 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     osc.start(); osc.stop(c.currentTime + dur * 1.5 + 0.1);
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur * 1.5);
+    registerVoice(g, c.currentTime + dur * 1.5, [osc, hp]);
     return dur * 1.5;
   },
 
@@ -242,7 +261,7 @@ export const VOICES = {
     const osc1 = c.createOscillator(), osc2 = c.createOscillator(), g = c.createGain();
     osc1.type = 'triangle'; osc1.frequency.value = f;
     osc2.type = 'sine'; osc2.frequency.value = f * 2.01;
-    osc2.detune.value = rnd(-2, 2); // Task 6
+    osc2.detune.value = rnd(-2, 2);
     const peakVol = vol * 0.6 * rnd(0.85, 1.0);
     g.gain.setValueAtTime(peakVol, c.currentTime);
     g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur);
@@ -253,7 +272,7 @@ export const VOICES = {
     osc1.start(); osc2.start();
     osc1.stop(c.currentTime + dur + 0.05); osc2.stop(c.currentTime + dur + 0.05);
     osc1.onended = () => { try { osc1.disconnect(); osc2.disconnect(); g.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur);
+    registerVoice(g, c.currentTime + dur, [osc1, osc2, hp]);
     return dur;
   },
 
@@ -270,7 +289,7 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     osc.start(); osc.stop(c.currentTime + dur * 0.5 + 0.05);
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur * 0.5);
+    registerVoice(g, c.currentTime + dur * 0.5, [osc, hp]);
     return dur * 0.5;
   },
 
@@ -278,12 +297,11 @@ export const VOICES = {
     const c = ac;
     const oscs = [];
     const g = c.createGain();
-    // 3 detuned voices for choir, Task 6: very tight detune
     for (let i = 0; i < 3; i++) {
       const osc = c.createOscillator();
       osc.type = 'sine';
       osc.frequency.value = f;
-      osc.detune.value = (i - 1) * rnd(3, 6); // tight spread
+      osc.detune.value = (i - 1) * rnd(3, 6);
       osc.connect(g);
       oscs.push(osc);
     }
@@ -297,7 +315,7 @@ export const VOICES = {
     g.connect(hp); hp.connect(reverbNode); hp.connect(dest);
     oscs.forEach(o => { o.start(); o.stop(c.currentTime + dur + 0.1); });
     oscs[0].onended = () => { try { oscs.forEach(o => o.disconnect()); g.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur);
+    registerVoice(g, c.currentTime + dur, [...oscs, hp]);
     return dur;
   },
 
@@ -318,7 +336,7 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     osc.start(); osc.stop(c.currentTime + dur + 0.1);
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); lp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur);
+    registerVoice(g, c.currentTime + dur, [osc, lp]);
     return dur;
   },
 
@@ -336,7 +354,7 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     osc.start(); osc.stop(c.currentTime + dur * 0.6 + 0.05);
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur * 0.6);
+    registerVoice(g, c.currentTime + dur * 0.6, [osc, hp]);
     return dur * 0.6;
   },
 
@@ -353,6 +371,7 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     osc.start(); osc.stop(c.currentTime + longDur + 0.1);
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); } catch(e){} };
+    registerVoice(g, c.currentTime + longDur, [osc]);
     return longDur;
   },
 
@@ -370,7 +389,7 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     osc.start(); osc.stop(c.currentTime + dur * 1.2 + 0.05);
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur * 1.2);
+    registerVoice(g, c.currentTime + dur * 1.2, [osc, hp]);
     return dur * 1.2;
   },
 
@@ -389,7 +408,7 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     osc.start(); osc.stop(c.currentTime + dur * 0.8 + 0.05);
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur * 0.8);
+    registerVoice(g, c.currentTime + dur * 0.8, [osc, hp]);
     return dur * 0.8;
   },
 
@@ -409,7 +428,7 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     osc.start(); osc.stop(c.currentTime + dur + 0.1);
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur);
+    registerVoice(g, c.currentTime + dur, [osc, hp]);
     return dur;
   },
 
@@ -431,7 +450,7 @@ export const VOICES = {
     osc1.start(); osc2.start();
     osc1.stop(c.currentTime + dur + 0.05); osc2.stop(c.currentTime + dur + 0.05);
     osc1.onended = () => { try { osc1.disconnect(); osc2.disconnect(); g.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur);
+    registerVoice(g, c.currentTime + dur, [osc1, osc2, hp]);
     return dur;
   },
 
@@ -449,7 +468,7 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     osc.start(); osc.stop(c.currentTime + dur * 0.4 + 0.05);
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur * 0.4);
+    registerVoice(g, c.currentTime + dur * 0.4, [osc, hp]);
     return dur * 0.4;
   },
 
@@ -477,18 +496,17 @@ export const VOICES = {
     g.connect(lp); lp.connect(hp); hp.connect(reverbNode); hp.connect(dest);
     oscs.forEach(o => { o.start(); o.stop(c.currentTime + dur + 0.1); });
     oscs[0].onended = () => { try { oscs.forEach(o => o.disconnect()); g.disconnect(); lp.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur);
+    registerVoice(g, c.currentTime + dur, [...oscs, lp, hp]);
     return dur;
   },
 
   whisper(f, dur, vol, dest, wordLen) {
     const c = ac;
-    const bufLen = c.sampleRate * dur;
-    const buf = c.createBuffer(1, bufLen, c.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < bufLen; i++) {
-      data[i] = (Math.random() * 2 - 1) * (1 - i / bufLen) * 0.5;
-    }
+    const buf = getOrCreateNoiseBuffer('whisper', dur, (data, bufLen) => {
+      for (let i = 0; i < bufLen; i++) {
+        data[i] = (Math.random() * 2 - 1) * (1 - i / bufLen) * 0.5;
+      }
+    });
     const src = c.createBufferSource(), g = c.createGain();
     const bp = c.createBiquadFilter();
     bp.type = 'bandpass'; bp.frequency.value = f * 2; bp.Q.value = 2;
@@ -500,19 +518,19 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     src.start(); src.stop(c.currentTime + dur + 0.05);
     src.onended = () => { try { src.disconnect(); g.disconnect(); bp.disconnect(); } catch(e){} };
+    registerVoice(g, c.currentTime + dur, [src, bp]);
     return dur;
   },
 
   wind(f, dur, vol, dest, wordLen) {
     const c = ac;
-    const bufLen = c.sampleRate * dur * 1.5;
-    const buf = c.createBuffer(1, bufLen, c.sampleRate);
-    const data = buf.getChannelData(0);
-    let prev = 0;
-    for (let i = 0; i < bufLen; i++) {
-      prev = prev * 0.92 + (Math.random() * 2 - 1) * 0.08;
-      data[i] = prev;
-    }
+    const buf = getOrCreateNoiseBuffer('wind', dur * 1.5, (data, bufLen) => {
+      let prev = 0;
+      for (let i = 0; i < bufLen; i++) {
+        prev = prev * 0.92 + (Math.random() * 2 - 1) * 0.08;
+        data[i] = prev;
+      }
+    });
     const src = c.createBufferSource(), g = c.createGain();
     const lp = c.createBiquadFilter();
     lp.type = 'lowpass'; lp.frequency.value = 600;
@@ -525,18 +543,17 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     src.start(); src.stop(c.currentTime + dur * 1.5 + 0.05);
     src.onended = () => { try { src.disconnect(); g.disconnect(); lp.disconnect(); } catch(e){} };
+    registerVoice(g, c.currentTime + dur * 1.5, [src, lp]);
     return dur * 1.5;
   },
 
   rain(f, dur, vol, dest, wordLen) {
     const c = ac;
-    const bufLen = c.sampleRate * dur;
-    const buf = c.createBuffer(1, bufLen, c.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < bufLen; i++) {
-      // sparse crackles — random impulses
-      data[i] = chance(0.02) ? rnd(-0.5, 0.5) : 0;
-    }
+    const buf = getOrCreateNoiseBuffer('rain', dur, (data, bufLen) => {
+      for (let i = 0; i < bufLen; i++) {
+        data[i] = chance(0.02) ? rnd(-0.5, 0.5) : 0;
+      }
+    });
     const src = c.createBufferSource(), g = c.createGain();
     const lp = c.createBiquadFilter();
     lp.type = 'lowpass'; lp.frequency.value = 3000;
@@ -548,17 +565,17 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     src.start(); src.stop(c.currentTime + dur + 0.05);
     src.onended = () => { try { src.disconnect(); g.disconnect(); lp.disconnect(); } catch(e){} };
+    registerVoice(g, c.currentTime + dur, [src, lp]);
     return dur;
   },
 
   vinyl(f, dur, vol, dest, wordLen) {
     const c = ac;
-    const bufLen = c.sampleRate * dur;
-    const buf = c.createBuffer(1, bufLen, c.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < bufLen; i++) {
-      data[i] = (Math.random() * 2 - 1) * 0.03 + (chance(0.005) ? rnd(-0.3, 0.3) : 0);
-    }
+    const buf = getOrCreateNoiseBuffer('vinyl', dur, (data, bufLen) => {
+      for (let i = 0; i < bufLen; i++) {
+        data[i] = (Math.random() * 2 - 1) * 0.03 + (chance(0.005) ? rnd(-0.3, 0.3) : 0);
+      }
+    });
     const src = c.createBufferSource(), g = c.createGain();
     const lp = c.createBiquadFilter();
     lp.type = 'lowpass'; lp.frequency.value = 2000;
@@ -572,19 +589,19 @@ export const VOICES = {
     g.connect(dest);
     src.start(); src.stop(c.currentTime + dur + 0.05);
     src.onended = () => { try { src.disconnect(); g.disconnect(); lp.disconnect(); hp.disconnect(); } catch(e){} };
+    registerVoice(g, c.currentTime + dur, [src, lp, hp]);
     return dur;
   },
 
   tape(f, dur, vol, dest, wordLen) {
     const c = ac;
-    const bufLen = c.sampleRate * dur;
-    const buf = c.createBuffer(1, bufLen, c.sampleRate);
-    const data = buf.getChannelData(0);
-    let prev = 0;
-    for (let i = 0; i < bufLen; i++) {
-      prev = prev * 0.95 + (Math.random() * 2 - 1) * 0.05;
-      data[i] = prev * 0.4;
-    }
+    const buf = getOrCreateNoiseBuffer('tape', dur, (data, bufLen) => {
+      let prev = 0;
+      for (let i = 0; i < bufLen; i++) {
+        prev = prev * 0.95 + (Math.random() * 2 - 1) * 0.05;
+        data[i] = prev * 0.4;
+      }
+    });
     const src = c.createBufferSource(), g = c.createGain();
     const lp = c.createBiquadFilter();
     lp.type = 'lowpass'; lp.frequency.value = 1500;
@@ -596,6 +613,7 @@ export const VOICES = {
     g.connect(dest);
     src.start(); src.stop(c.currentTime + dur + 0.05);
     src.onended = () => { try { src.disconnect(); g.disconnect(); lp.disconnect(); } catch(e){} };
+    registerVoice(g, c.currentTime + dur, [src, lp]);
     return dur;
   },
 
@@ -614,6 +632,7 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     osc.start(); osc.stop(c.currentTime + dur * 2 + 0.1);
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); lp.disconnect(); } catch(e){} };
+    registerVoice(g, c.currentTime + dur * 2, [osc, lp]);
     return dur * 2;
   },
 };
@@ -637,42 +656,27 @@ export function playWord(word, sentenceType, progress, punctBefore, wordLen) {
   if (!reverbNode) buildReverb();
   cleanupVoices();
 
-  // Stereo panning: gentle, seeded per-note position so the mix breathes in space.
-  // Pro approach — the DRY (direct) signal is panned; the reverb tail stays centered
-  // (shared room), so we route the voice into a panner → master, while the voice's
-  // own reverb send (inside each voice fn) still goes to the centered reverbNode.
   const panner = c.createStereoPanner ? c.createStereoPanner() : null;
   let dest;
   if (panner) {
-    // Subtle, musical spread: mostly near-center, occasionally wider — never hard-panned.
     panner.pan.value = Math.max(-0.85, Math.min(0.85, rnd(-0.55, 0.55)));
     panner.connect(getMasterBus());
     dest = panner;
-    // GC: disconnect the panner after the note's tail (generous 8s cap)
     setTimeout(() => { try { panner.disconnect(); } catch (e) {} }, 8000);
   } else {
     dest = getMasterBus();
   }
 
-  // NOTE: silence/breath is handled entirely by the caller (main.js) BEFORE
-  // calling playWord. We must NOT re-check it here, otherwise a word that
-  // follows any punctuation (comma, etc.) would get swallowed / muted.
-  // playWord always plays its note.
-
-  // Select voice from group
   const group = VOICE_GROUPS[sentenceType] || VOICE_GROUPS.statement;
   const voiceName = pick(group);
   const voiceFn = VOICES[voiceName];
   if (!voiceFn) return { played: false, silenceDur: 0 };
 
-  // Task 1: stepwise note selection
   const noteIdx = stepwiseNoteIndex(currentScale.length || 7);
   const baseFreq = currentScale[noteIdx] || 220;
-  // Keep in a comfortable octave range (no extreme jumps)
   const octaveShift = chance(0.15) ? (chance(0.5) ? 2 : 0.5) : 1;
   const freq = baseFreq * octaveShift;
 
-  // Task 5: humanized velocity — word length affects volume and duration
   const wl = wordLen || word.length || 4;
   const baseVol = 0.12 + progress * 0.06;
   const vol = baseVol * rnd(0.75, 1.0) * (1 - Math.min(wl, 12) * 0.015);
@@ -743,12 +747,11 @@ export function startAmbient(dests) {
   function playCrackle() {
     if (!ambientRunning) return;
     const dur = barDur() * rnd(1.5, 3);
-    const bufLen = c.sampleRate * dur;
-    const buf = c.createBuffer(1, bufLen, c.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < bufLen; i++) {
-      data[i] = chance(0.003) ? rnd(-0.15, 0.15) : (Math.random() * 2 - 1) * 0.008;
-    }
+    const buf = getOrCreateNoiseBuffer('vinyl_crackle', dur, (data, bufLen) => {
+      for (let i = 0; i < bufLen; i++) {
+        data[i] = chance(0.003) ? rnd(-0.15, 0.15) : (Math.random() * 2 - 1) * 0.008;
+      }
+    });
     const src = c.createBufferSource(), g = c.createGain();
     const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2500;
     const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 300;
@@ -767,14 +770,13 @@ export function startAmbient(dests) {
   function playHiss() {
     if (!ambientRunning) return;
     const dur = barDur() * rnd(2, 4);
-    const bufLen = c.sampleRate * dur;
-    const buf = c.createBuffer(1, bufLen, c.sampleRate);
-    const data = buf.getChannelData(0);
-    let prev = 0;
-    for (let i = 0; i < bufLen; i++) {
-      prev = prev * 0.93 + (Math.random() * 2 - 1) * 0.07;
-      data[i] = prev;
-    }
+    const buf = getOrCreateNoiseBuffer('tape_hiss', dur, (data, bufLen) => {
+      let prev = 0;
+      for (let i = 0; i < bufLen; i++) {
+        prev = prev * 0.93 + (Math.random() * 2 - 1) * 0.07;
+        data[i] = prev;
+      }
+    });
     const src = c.createBufferSource(), g = c.createGain();
     const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1800;
     src.buffer = buf;
@@ -792,24 +794,20 @@ export function startAmbient(dests) {
   // ---- warm motif note (Toby Fox-ish singing line) ----
   function playMotifNote() {
     if (!ambientRunning) return;
-    const f = pick(currentScale) * 2; // one octave up — warm, singing register
+    const f = pick(currentScale) * 2;
     const osc = c.createOscillator(), g = c.createGain();
-    // slightly softer filter so the note has no sharp edge — rounder, gentler tone
     const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1500 - moodDarkness() * 400;
     osc.type = 'sine'; osc.frequency.value = f;
-    const dur = beatDur() * rnd(2.2, 3.2); // longer, more sustained — notes linger & sing
-    const peak = rnd(0.035, 0.06) * ambientDensity; // soft & gentle, like the original
+    const dur = beatDur() * rnd(2.2, 3.2);
+    const peak = rnd(0.035, 0.06) * ambientDensity;
     g.gain.setValueAtTime(0, c.currentTime);
-    // gentle, slow swell instead of a quick onset — removes the "sharp/early" bite
     g.gain.linearRampToValueAtTime(peak, c.currentTime + 0.30);
-    // hold near-peak a moment, then a long, slow tail so it fades softly (not cut short)
     g.gain.setValueAtTime(peak, c.currentTime + dur * 0.55);
     g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur + 0.8);
     osc.connect(lp); lp.connect(g);
     g.connect(reverbNode); dests.forEach(d => g.connect(d));
     osc.start(); osc.stop(c.currentTime + dur + 1.0);
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); lp.disconnect(); } catch(e){} };
-    // Task 8: sometimes skip motif note for breathing space
     const nextDelay = chance(0.2) ? beatDur() * rnd(4, 6) : beatDur() * rnd(2, 3.5);
     ambientTimers.push(setTimeout(playMotifNote, nextDelay * 1000));
   }
@@ -818,14 +816,13 @@ export function startAmbient(dests) {
   function playTapeWarmth() {
     if (!ambientRunning) return;
     const dur = barDur() * rnd(3, 5);
-    const bufLen = c.sampleRate * dur;
-    const buf = c.createBuffer(1, bufLen, c.sampleRate);
-    const data = buf.getChannelData(0);
-    let prev = 0;
-    for (let i = 0; i < bufLen; i++) {
-      prev = prev * 0.96 + (Math.random() * 2 - 1) * 0.04;
-      data[i] = prev * Math.sin(Math.PI * i / bufLen); // smooth envelope
-    }
+    const buf = getOrCreateNoiseBuffer('tape_warmth_bed', dur, (data, bufLen) => {
+      let prev = 0;
+      for (let i = 0; i < bufLen; i++) {
+        prev = prev * 0.96 + (Math.random() * 2 - 1) * 0.04;
+        data[i] = prev * Math.sin(Math.PI * i / bufLen);
+      }
+    });
     const src = c.createBufferSource(), g = c.createGain();
     const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900;
     src.buffer = buf;
@@ -842,7 +839,7 @@ export function startAmbient(dests) {
   function playChordPad() {
     if (!ambientRunning) return;
     if (currentScale.length < 5) { ambientTimers.push(setTimeout(playChordPad, 3000)); return; }
-    const degrees = [[0, 2, 4], [5, 0, 2], [3, 5, 0], [4, 6, 1]]; // i–vi–iv–v-ish
+    const degrees = [[0, 2, 4], [5, 0, 2], [3, 5, 0], [4, 6, 1]];
     const deg = pick(degrees);
     const voicing = buildVoicing(currentScale, deg, chance(0.5) ? 0 : 7);
     const dur = barDur() * rnd(2, 3);
@@ -882,7 +879,6 @@ export function startAmbient(dests) {
     ambientTimers.push(setTimeout(playSubPulse, dur * 1000 + rnd(500, 1500)));
   }
 
-  // Launch all ambient layers
   playDrone();
   playCrackle();
   playHiss();
