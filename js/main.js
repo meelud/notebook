@@ -83,10 +83,12 @@ function buildRenderOverlay(text, tokens) {
     const at = text.indexOf(tok.word, cursor);
     if (at === -1) continue;
     if (at > cursor) {
-      renderEl.appendChild(document.createTextNode(text.slice(cursor, at)));
+      const interstitial = text.slice(cursor, at);
+      renderEl.appendChild(document.createTextNode(interstitial));
     }
     const span = document.createElement('span');
     span.textContent = tok.word;
+    span.style.display = 'inline-block'; // Protects word bounds during RTL layout wrap
     renderEl.appendChild(span);
     wordSpans.push(span);
     cursor = at + tok.word.length;
