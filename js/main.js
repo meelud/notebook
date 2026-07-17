@@ -279,13 +279,20 @@ function startRecording() {
 }
 
 function stopRecording() {
-  if (recProcessor) {
-    try {
-      getMasterBus().disconnect(recProcessor);
-      recProcessor.disconnect();
-    } catch (e) {}
-    recProcessor = null;
+  if (!recProcessor) return;
+  // Two separate try/catch blocks: if the first disconnect throws (already
+  // detached), the second must still run so we never leak a live processor.
+  try {
+    getMasterBus().disconnect(recProcessor);
+  } catch (e) {
+    // Already disconnected or never fully connected — non-fatal.
   }
+  try {
+    recProcessor.disconnect();
+  } catch (e) {
+    // Already disconnected — non-fatal.
+  }
+  recProcessor = null;
 }
 
 // Merge chunked Float32 buffers into one
@@ -542,8 +549,12 @@ function showProgress(fraction) {
   // Clamp: fraction may be NaN/Infinity or out of [0,1] due to drift in long loops.
   const safeFraction = Number.isFinite(fraction) ? fraction : 0;
   const pct = Math.max(0, Math.min(100, safeFraction * 100));
-  progEl.classList.add('on');
-  progFill.style.width = `${pct}%`;
+  // Batch the DOM write into the next animation frame so width updates align
+  // with the monitor refresh (smoother bar, no layout thrash mid-loop).
+  requestAnimationFrame(() => {
+    progEl.classList.add('on');
+    progFill.style.width = `${pct}%`;
+  });
 }
 function hideProgress() {
   if (progEl) progEl.classList.remove('on');
