@@ -119,10 +119,13 @@ function clearRenderOverlay() {
 //  Playback loop
 // ──────────────────────────────────────────────────────────────
 function startPlayback() {
+  // Atomic guard: ignore re-entrant calls from rapid clicks or Shift+Enter repeats.
+  if (playing) return;
+
   const text = editor.value || editor.innerText || '';
   if (!text.trim()) return;
 
-  playing = true;
+  playing = true; // set immediately to close the race window
   if (playBtn) playBtn.disabled = true;
   if (stopBtn) stopBtn.disabled = false;
   if (wcEl) wcEl.textContent = '▶ playing';
@@ -203,17 +206,30 @@ function startPlayback() {
 }
 
 function stopPlayback() {
+  // Idempotency: silently ignore if already fully stopped.
+  if (!playing && !playTimeout) return;
+
+  // Clear scheduling state first so no pending callback fires mid-teardown.
   playing = false;
   if (playTimeout) { clearTimeout(playTimeout); playTimeout = null; }
+
+  // Stop audio layers, then recording.
   stopAmbient();
+  stopRecording();
+
+  // UI cleanup.
   clearRenderOverlay();
   hideProgress();
   stopViz();
-  updatePlayState();
-  updateWordCount();
+
+  // Button states.
   if (stopBtn) stopBtn.disabled = true;
   if (saveBtn) saveBtn.disabled = (recLength === 0);
-  stopRecording();
+
+  // Restore word-count display.
+  updatePlayState();
+  updateWordCount();
+
   // Free cached noise buffers so a long session doesn't hold RAM between plays.
   clearNoiseCache();
 }
@@ -503,16 +519,31 @@ document.addEventListener('keydown', (e) => {
 // ──────────────────────────────────────────────────────────────
 function updateWordCount() {
   const text = editor ? (editor.value || '') : '';
-  const words = text.trim() ? text.trim().split(/\s+/).length : 0;
-  if (wcEl && !playing) wcEl.textContent = `${words} word${words !== 1 ? 's' : ''}`;
+
+  // Count with the SAME tokenizer playback uses, so the number matches the
+  // notes actually played (handles Persian ZWNJ, emoji, and punctuation).
+  const count = tokenize(text).length;
+
+  // Only update DOM when not playing (prevents a "0 words" flash mid-playback).
+  if (wcEl && !playing) {
+    const one = (typeof Intl !== 'undefined' && Intl.PluralRules)
+      ? new Intl.PluralRules('en').select(count) === 'one'
+      : count === 1;
+    wcEl.textContent = `${count} ${one ? 'word' : 'words'}`;
+  }
 }
 
 // ──────────────────────────────────────────────────────────────
 //  Progress bar & Visualizer
 // ──────────────────────────────────────────────────────────────
 function showProgress(fraction) {
-  if (progEl) progEl.classList.add('on');
-  if (progFill) progFill.style.width = `${Math.min(fraction * 100, 100)}%`;
+  // Guard: elements may be absent in test environments or future layouts.
+  if (!progEl || !progFill) return;
+  // Clamp: fraction may be NaN/Infinity or out of [0,1] due to drift in long loops.
+  const safeFraction = Number.isFinite(fraction) ? fraction : 0;
+  const pct = Math.max(0, Math.min(100, safeFraction * 100));
+  progEl.classList.add('on');
+  progFill.style.width = `${pct}%`;
 }
 function hideProgress() {
   if (progEl) progEl.classList.remove('on');

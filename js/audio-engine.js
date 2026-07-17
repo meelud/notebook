@@ -6,7 +6,12 @@ import { buildScale, detectMood, analyzeText, hashText, buildVoicing, chordFromS
 export let ac;
 function ensureCtx() {
   if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
-  if (ac.state === 'suspended') ac.resume();
+  // resume() returns a Promise that rejects on iOS/Safari before the first user
+  // gesture — catch it so we don't throw an unhandled rejection. unlockAudio()
+  // in main.js retries on the next interaction.
+  if (ac.state === 'suspended') {
+    try { ac.resume().catch(() => {}); } catch (e) {}
+  }
   return ac;
 }
 
