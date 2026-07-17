@@ -413,6 +413,14 @@ function saveRecording() {
     }, 'image/png');
   }).catch(() => {});
   if (wcEl) wcEl.textContent = '💾 saved!';
+
+  // Free the raw PCM capture buffers now that the WAV is encoded — they can be
+  // tens of MB for a long piece and would otherwise linger until the next record.
+  // (recSourceText is intentionally kept so the async cover render above still works.)
+  recBuffersL = [];
+  recBuffersR = [];
+  recLength = 0;
+
   setTimeout(updateWordCount, 2000);
 }
 
@@ -511,18 +519,44 @@ function hideProgress() {
   if (progFill) progFill.style.width = '0%';
 }
 
-let vizInterval = null;
+// Real audio-reactive visualizer: an AnalyserNode reads the master bus and
+// requestAnimationFrame drives the bars in sync with the monitor refresh rate.
+let analyserNode = null;
+let vizRafId = null;
+
+function setupAnalyser() {
+  const ctx = ensureCtx();
+  if (!analyserNode) {
+    analyserNode = ctx.createAnalyser();
+    analyserNode.fftSize = 64;                 // small = fast, 32 bins
+    analyserNode.smoothingTimeConstant = 0.85; // smooth, not jumpy
+    getMasterBus().connect(analyserNode);      // read-only tap; audio unchanged
+  }
+  return analyserNode;
+}
+
 function startViz() {
   if (vizEl) vizEl.classList.add('on');
-  vizInterval = setInterval(() => {
-    vizBars.forEach(bar => {
-      bar.style.height = `${2 + Math.random() * 14}px`;
+  const analyser = setupAnalyser();
+  const dataArray = new Uint8Array(analyser.frequencyBinCount);
+  const barCount = vizBars.length;
+
+  function draw() {
+    if (!playing) return;
+    analyser.getByteFrequencyData(dataArray);
+    vizRafId = requestAnimationFrame(draw);
+    const step = Math.max(1, Math.floor(dataArray.length / barCount));
+    vizBars.forEach((bar, i) => {
+      const value = dataArray[i * step] || 0; // 0–255
+      bar.style.height = `${1.5 + (value / 255) * 16.5}px`;
     });
-  }, 120);
+  }
+  draw();
 }
+
 function stopViz() {
   if (vizEl) vizEl.classList.remove('on');
-  if (vizInterval) { clearInterval(vizInterval); vizInterval = null; }
+  if (vizRafId) { cancelAnimationFrame(vizRafId); vizRafId = null; }
   vizBars.forEach(bar => { bar.style.height = '1.5px'; });
 }
 
