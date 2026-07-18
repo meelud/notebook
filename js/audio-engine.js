@@ -1,4 +1,4 @@
-import { buildScale, detectMood, analyzeText, hashText, buildVoicing, chordFromScale } from './mood.js';
+import { buildScale, detectMood, analyzeText, buildVoicing } from './mood.js';
 
 // ──────────────────────────────────────────────────────────────
 //  Audio Context & Master Bus
