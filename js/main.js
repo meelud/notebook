@@ -557,6 +557,8 @@ function showProgress(fraction) {
   // Batch the DOM write into the next animation frame so width updates align
   // with the monitor refresh (smoother bar, no layout thrash mid-loop).
   requestAnimationFrame(() => {
+    // A frame queued just before stopPlayback() must not re-show the bar.
+    if (!playing) return;
     progEl.classList.add('on');
     progFill.style.width = `${pct}%`;
   });
