@@ -40,6 +40,11 @@ let _rng;
 export function seedRng(seed) {
   let s = seed >>> 0;
   _rng = () => { s |= 0; s = s + 0x6D2B79F5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s); t ^= t + Math.imul(t ^ t >>> 7, 61 | t); return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  // Bug A fix: reset the stepwise-melody cursor on every (re)seed so the same
+  // text always starts the melody from the same point, independent of what was
+  // played before. Restores the "same text = same song" guarantee. Timbres,
+  // voice selection and mix are untouched — only note ORDER becomes deterministic.
+  lastNoteIndex = 3;
 }
 function rnd(a = 0, b = 1) { return _rng() * (b - a) + a; }
 function pick(arr) { return arr[Math.floor(_rng() * arr.length)]; }
