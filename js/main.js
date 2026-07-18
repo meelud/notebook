@@ -175,15 +175,14 @@ function startPlayback() {
     // Check for silence/breath before this word
     const silence = getSilenceDuration(token.punctBefore, idx, totalWords);
     if (silence > 0) {
-      idx++; // consume the token but play silence
-      // After silence, replay this word (or skip if it's just punctuation)
+      // Capture idx NOW before incrementing so the closure highlights the right word.
+      const silentIdx = idx;
+      idx++; // advance the counter so playNext moves on after the timeout
       playTimeout = setTimeout(() => {
-        // Now play the actual word after the breath
         if (!playing) return;
         const result = playWord(token.word, sentenceType, progress, null, token.len);
-        highlightWord(idx - 1);
+        highlightWord(silentIdx); // highlight the word that's actually playing
         const wordDur = result.duration || 0.4;
-        // Base timing between words
         const gap = wordDur * rnd(0.5, 0.8) + 0.05;
         playTimeout = setTimeout(playNext, (silence + gap) * 1000);
       }, silence * 1000);

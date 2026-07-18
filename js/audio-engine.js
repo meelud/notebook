@@ -301,7 +301,7 @@ function buildReverb() {
     let prev = 0;
     const lpCoeff = 0.72; // strong LP filtering — removes all harshness from tail
     for (let i = 0; i < frames; i++) {
-      const noise = Math.random() * 2 - 1;
+      const noise = _rng() * 2 - 1;
       // one-pole LP filter applied directly during buffer generation
       prev = prev * lpCoeff + noise * (1 - lpCoeff);
       // exponential decay envelope
@@ -447,7 +447,7 @@ export const VOICES = {
     const buf = getOrCreateNoiseBuffer('breath', dur, (data, bufLen) => {
       let prev = 0;
       for (let i = 0; i < bufLen; i++) {
-        prev = prev * 0.85 + (Math.random() * 2 - 1) * 0.15;
+        prev = prev * 0.85 + (_rng() * 2 - 1) * 0.15;
         data[i] = prev * (1 - i / bufLen);
       }
     });
@@ -733,7 +733,7 @@ export const VOICES = {
     const c = ac;
     const buf = getOrCreateNoiseBuffer('whisper', dur, (data, bufLen) => {
       for (let i = 0; i < bufLen; i++) {
-        data[i] = (Math.random() * 2 - 1) * (1 - i / bufLen) * 0.5;
+        data[i] = (_rng() * 2 - 1) * (1 - i / bufLen) * 0.5;
       }
     });
     const src = c.createBufferSource(), g = c.createGain();
@@ -756,7 +756,7 @@ export const VOICES = {
     const buf = getOrCreateNoiseBuffer('wind', dur * 1.5, (data, bufLen) => {
       let prev = 0;
       for (let i = 0; i < bufLen; i++) {
-        prev = prev * 0.92 + (Math.random() * 2 - 1) * 0.08;
+        prev = prev * 0.92 + (_rng() * 2 - 1) * 0.08;
         data[i] = prev;
       }
     });
@@ -802,7 +802,7 @@ export const VOICES = {
     const c = ac;
     const buf = getOrCreateNoiseBuffer('vinyl', dur, (data, bufLen) => {
       for (let i = 0; i < bufLen; i++) {
-        data[i] = (Math.random() * 2 - 1) * 0.03 + (chance(0.005) ? rnd(-0.3, 0.3) : 0);
+        data[i] = (_rng() * 2 - 1) * 0.03 + (chance(0.005) ? rnd(-0.3, 0.3) : 0);
       }
     });
     const src = c.createBufferSource(), g = c.createGain();
@@ -827,7 +827,7 @@ export const VOICES = {
     const buf = getOrCreateNoiseBuffer('tape', dur, (data, bufLen) => {
       let prev = 0;
       for (let i = 0; i < bufLen; i++) {
-        prev = prev * 0.95 + (Math.random() * 2 - 1) * 0.05;
+        prev = prev * 0.95 + (_rng() * 2 - 1) * 0.05;
         data[i] = prev * 0.4;
       }
     });
@@ -978,7 +978,7 @@ export function startAmbient(dests) {
     const dur = barDur() * rnd(1.5, 3);
     const buf = getOrCreateNoiseBuffer('vinyl_crackle', dur, (data, bufLen) => {
       for (let i = 0; i < bufLen; i++) {
-        data[i] = chance(0.003) ? rnd(-0.15, 0.15) : (Math.random() * 2 - 1) * 0.008;
+        data[i] = chance(0.003) ? rnd(-0.15, 0.15) : (_rng() * 2 - 1) * 0.008;
       }
     });
     const src = c.createBufferSource(), g = c.createGain();
@@ -1002,7 +1002,7 @@ export function startAmbient(dests) {
     const buf = getOrCreateNoiseBuffer('tape_hiss', dur, (data, bufLen) => {
       let prev = 0;
       for (let i = 0; i < bufLen; i++) {
-        prev = prev * 0.93 + (Math.random() * 2 - 1) * 0.07;
+        prev = prev * 0.93 + (_rng() * 2 - 1) * 0.07;
         data[i] = prev;
       }
     });
@@ -1048,7 +1048,7 @@ export function startAmbient(dests) {
     const buf = getOrCreateNoiseBuffer('tape_warmth_bed', dur, (data, bufLen) => {
       let prev = 0;
       for (let i = 0; i < bufLen; i++) {
-        prev = prev * 0.96 + (Math.random() * 2 - 1) * 0.04;
+        prev = prev * 0.96 + (_rng() * 2 - 1) * 0.04;
         data[i] = prev * Math.sin(Math.PI * i / bufLen);
       }
     });

@@ -54,10 +54,7 @@ export const EMOTION_LEXICON = {
     'elated','jubilant','overjoyed','delighted','cheerful','cheery','bubbly','perky','spirited',
     'exuberant','radiating','glowing','beaming','grinning','laughing','chuckling','celebratory',
     'festive','playful','silly','goofy','carefree','lighthearted','blissful','euphoric',
-    'on cloud nine','over the moon','walking on air','tickled pink','in high spirits',
-    'all smiles','having a blast','jumping for joy','bursting with joy','infectious laughter',
-    'feel-good','good vibes','positive energy',
-    'شاد','خوشحال','شادمان','خنده','لبخند','سرخوش','بانمک','هیجان','شور','شعف','مسرور','سرزنده',
+                'شاد','خوشحال','شادمان','خنده','لبخند','سرخوش','بانمک','هیجان','شور','شعف','مسرور','سرزنده',
     'خوشی','شادی','خوشبخت','خوشبختی','سرحال','بشاش','خندان','خوش','خرم','دلشاد','ذوق',
     'کیف','حال','حالخوب','خوشوقت','مفرح','لذت','لذت‌بخش','دلپذیر','نشاط','بانشاط','قند‌توی‌دلم',
     'ذوق‌مرگ','پرانرژی','سرزندگی','خوشحالی','لبخندزنان','قهقهه','بخند','خوشگذرونی','عشق‌وحال'
