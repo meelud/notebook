@@ -332,6 +332,37 @@ export const INTENSIFIERS = {
 // word like "death" inside "love you to death" is consumed by the phrase and
 // never counted as its own dark word.
 export const PHRASES = [
+
+  // ── Persian phrases — multi-word expressions that tokenizer splits ────────
+  // love
+  { p: 'دوستت دارم',        weight: 2.0, tense: 0 },
+  { p: 'دوستم داری',        weight: 1.8, tense: 0 },
+  { p: 'دوستت داشتم',       weight: 1.6, tense: 0 },
+  { p: 'عاشقت هستم',        weight: 2.0, tense: 0 },
+  { p: 'عاشقم هستی',        weight: 1.8, tense: 0 },
+  { p: 'دلم برات تنگ شده',  weight: 1.8, tense: 0 },
+  { p: 'دلم تنگ شده',       weight: 1.5, tense: 0 },
+  { p: 'بهت فکر میکنم',     weight: 1.2, tense: 0 },
+  { p: 'نمیتونم بدون تو',   weight: 1.4, tense: 0.1 },
+  { p: 'قلبم پیشته',        weight: 1.6, tense: 0 },
+  { p: 'همه چیزم تویی',     weight: 1.8, tense: 0 },
+  { p: 'فدات میشم',         weight: 1.6, tense: 0 },
+  // sadness
+  { p: 'دلم گرفته',         weight: -1.2, tense: 0.1 },
+  { p: 'حالم خوب نیست',     weight: -1.3, tense: 0.2 },
+  { p: 'خوشحال نیستم',      weight: -1.0, tense: 0.1 },
+  { p: 'غمگین هستم',        weight: -1.3, tense: 0.1 },
+  { p: 'ناراحت هستم',       weight: -1.2, tense: 0.2 },
+  { p: 'دارم گریه میکنم',   weight: -1.4, tense: 0.2 },
+  { p: 'دلم میخواد گریه کنم', weight: -1.3, tense: 0.2 },
+  // fear/anxiety
+  { p: 'میترسم از',         weight: -1.2, tense: 0.6 },
+  { p: 'ترس دارم',          weight: -1.1, tense: 0.5 },
+  { p: 'نگرانم از',         weight: -0.9, tense: 0.4 },
+  // calm/hope
+  { p: 'حالم خوبه',         weight: 1.0, tense: -0.1 },
+  { p: 'آروم هستم',         weight: 0.9, tense: -0.2 },
+  { p: 'امیدوارم که',       weight: 0.8, tense: 0 },
   // ── pure intensifiers of the dominant emotion (EN) ──
   { p: 'to death', intensify: 1.9 },
   { p: 'to bits', intensify: 1.6 },
@@ -669,18 +700,38 @@ export function detectMood(text) {
     if (!entry[i]) continue;
     let { w: wWeight, t: wTense } = entry[i];
     if (flipped[i]) {
-      // invert polarity, dampen slightly (negated emotion ≠ full opposite),
-      // and nudge tension up (negation adds friction/ambiguity)
       wWeight = -wWeight * 0.85;
       wTense = Math.abs(wTense) * 0.5 + 0.15;
     }
-    score += wWeight;
-    tense += wTense;
+    // Positional weight: words toward the end carry more emotional weight —
+    // they represent the resolution or final feeling of the text.
+    // Early 20% → 0.7x, middle → 1.0x, last 20% → 1.4x
+    const pos = n > 1 ? i / (n - 1) : 0.5;
+    const posWeight = pos < 0.2 ? 0.7 : pos > 0.8 ? 1.4 : 1.0;
+    score += wWeight * posWeight;
+    tense += wTense * posWeight;
   }
 
   // fold in the fixed-emotion phrases detected up front
   score += phraseScore;
   tense += phraseTense;
+
+  // Bigram smoothing: when two adjacent emotion words have opposite polarity,
+  // the stronger one should dominate instead of them cancelling out.
+  // e.g. "درد عشق": pain(-0.8) + love(+1.0) → currently sum=-0.8+1.0=+0.2
+  // With bigram: dominant is love(+1.0), weaken the minor(-0.8 → -0.4), result≈+0.6
+  for (let i = 0; i < n - 1; i++) {
+    if (!entry[i] || !entry[i + 1]) continue;
+    const a = entry[i].w, b = entry[i + 1].w;
+    if (Math.sign(a) !== Math.sign(b)) {
+      // opposite polarity pair — let the stronger dominate
+      const stronger = Math.abs(a) > Math.abs(b) ? a : b;
+      const weaker   = Math.abs(a) > Math.abs(b) ? b : a;
+      // reduce the weaker contribution retroactively
+      const reduction = weaker * 0.45; // remove 45% of the weaker word's contribution
+      score -= reduction;
+    }
+  }
 
   // Apply phrase intensifiers to the DOMINANT emotion: they amplify whatever the
   // sentence already feels (e.g. "to death" makes "love" MORE loving, "scared"
@@ -723,6 +774,56 @@ export function detectMood(text) {
     idx = Math.round(((clamped + 1.5) / 3.0) * (MODE_ORDER.length - 1));
     // high tension → pull toward the exotic/unstable cluster (first 5 modes)
     if (tenseNorm > 0.5 && idx > 3) idx = Math.max(1, idx - 4);
+  }
+
+  // Dominant emotion override: if one emotion category provides ≥60% of
+  // all emotion hits, it steers the final mode index toward its natural position.
+  // This prevents e.g. a love poem with a few sad words from landing in the middle.
+  if (emotionDensity >= 0.12) {
+    const catCounts = {};
+    // Use phraseScore (already computed above) to seed catCounts —
+    // this is more reliable than re-detecting phrases with normalized toks.
+    if (phraseScore > 1.2)  catCounts['love']    = (catCounts['love']    || 0) + 3;
+    else if (phraseScore > 0.2) catCounts['calm'] = (catCounts['calm']   || 0) + 2;
+    if (phraseScore < -0.5) catCounts['sadness']  = (catCounts['sadness']|| 0) + 3;
+    if (phraseTense  > 0.3) catCounts['fear']     = (catCounts['fear']   || 0) + 2;
+    for (let i = 0; i < n; i++) {
+      if (!entry[i]) continue;
+      const w = toks[i];
+      for (const [cat, data] of Object.entries(EMOTION_LEXICON)) {
+        if (data.words && data.words.includes(w)) {
+          catCounts[cat] = (catCounts[cat] || 0) + 1;
+          break;
+        }
+      }
+    }
+    const totalHits = Object.values(catCounts).reduce((a, b) => a + b, 0);
+    if (totalHits > 0) {
+      const [topCat, topCount] = Object.entries(catCounts).sort((a, b) => b[1] - a[1])[0];
+      const dominance = topCount / totalHits;
+      if (dominance >= 0.5) {  // 50% threshold — more responsive for short FA texts
+        // pull idx 30% toward where this category naturally sits
+        const catTargets = {
+          joy:       20, // pentMajor — bright, open
+          love:      19, // lydian — floating, warm, Aphex-ish
+          calm:      16, // wholeTone — weightless, serene
+          hope:      18, // mixolydian — warm, resolved-ish
+          sadness:    8, // minor — heavy, melancholic
+          fear:       4, // phrygian — tense, confrontational
+          anger:      1, // locrian — most unstable
+          dark:       3, // pelog — dark folklore, unstable
+          nostalgia: 12, // dorian — bittersweet, lifted
+          confusion: 15, // enigmatic — alien, unresolved
+          surprise:  17, // blues — unexpected warmth
+          vice:       9, // insensen — modal, moody
+          casual:    16, // wholeTone — neutral, open
+        };
+        const target = catTargets[topCat];
+        if (target !== undefined) {
+          idx = Math.round(idx * 0.7 + target * 0.3);
+        }
+      }
+    }
   }
 
   idx = Math.max(0, Math.min(MODE_ORDER.length - 1, idx));

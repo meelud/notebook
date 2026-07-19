@@ -1,4 +1,4 @@
-import { buildScale, detectMood, analyzeText, buildVoicing } from './mood.js';
+import { buildScale, detectMood, analyzeText, buildVoicing, hashText, ROOT_CANDIDATES_LOW, ROOT_CANDIDATES_MID } from './mood.js';
 
 // ──────────────────────────────────────────────────────────────
 //  Audio Context & Master Bus
@@ -878,7 +878,10 @@ const VOICE_GROUPS = {
 // ──────────────────────────────────────────────────────────────
 let currentScale = [];
 let currentMode = 'minor';
-let ambientDensity = 0;
+let ambientDensity   = 0;
+let currentDarkness  = 0.5; // 0=bright .. 1=dark — from analyzeText
+let currentTension   = 0.0; // 0=calm  .. 1=tense
+let currentNostalgia = 0.0; // 0=none  .. 1=strong
 
 export function playWord(word, sentenceType, progress, punctBefore, wordLen) {
   const c = ensureCtx();
@@ -896,14 +899,30 @@ export function playWord(word, sentenceType, progress, punctBefore, wordLen) {
     dest = getMasterBus();
   }
 
-  const group = VOICE_GROUPS[sentenceType] || VOICE_GROUPS.statement;
+  // Voice group: sentence type is primary. Analysis values add a secondary bias only —
+  // they shift probabilities, never hard-override the sentence type choice.
+  let group = VOICE_GROUPS[sentenceType] || VOICE_GROUPS.statement;
+  if (currentTension > 0.6 && sentenceType === 'statement') {
+    // tense statements lean toward edgier exclamation voices
+    if (_rng() < 0.45) group = VOICE_GROUPS.exclamation;
+  } else if (currentDarkness > 0.65 && sentenceType === 'question') {
+    // dark questions lean away from bright bell/glass/harp voices
+    if (_rng() < 0.4) group = VOICE_GROUPS.statement;
+  }
   const voiceName = pick(group);
   const voiceFn = VOICES[voiceName];
   if (!voiceFn) return { played: false, silenceDur: 0 };
 
   const noteIdx = stepwiseNoteIndex(currentScale.length || 7);
   const baseFreq = currentScale[noteIdx] || 220;
-  const octaveShift = chance(0.15) ? (chance(0.5) ? 2 : 0.5) : 1;
+  // Octave bias: darkness + nostalgia pull register down, brightness pulls up.
+  // Purely probabilistic — never a hard override.
+  const darkBias  = Math.max(0, currentDarkness  - 0.4) * 0.35;
+  const nostBias  = currentNostalgia * 0.12;
+  const lowProb   = 0.08 + darkBias + nostBias;
+  const highProb  = Math.max(0, 0.15 - darkBias * 0.8);
+  const roll = _rng();
+  const octaveShift = roll < lowProb ? 0.5 : roll < lowProb + highProb ? 2 : 1;
   const freq = baseFreq * octaveShift;
 
   const wl = wordLen || word.length || 4;
@@ -922,8 +941,19 @@ export function setMood(text) {
   const mood = detectMood(text);
   const analysis = analyzeText(text);
   currentMode = mood.mode;
-  currentScale = buildScale(220, currentMode);
-  ambientDensity = analysis.density || 0;
+  // Pick root from text hash so same text = same root (deterministic).
+  // Darkness selects the register: dark text uses the low octave candidates,
+  // bright/neutral text uses the mid register. This is the missing link between
+  // emotional content and the actual pitch of the piece.
+  const h = hashText(text);
+  const dark = analysis.darkness ?? 0.5;
+  const candidates = dark > 0.55 ? ROOT_CANDIDATES_LOW : ROOT_CANDIDATES_MID;
+  const rootHz = candidates[h % candidates.length];
+  currentScale = buildScale(rootHz, currentMode);
+  ambientDensity   = analysis.density   ?? 0;
+  currentDarkness  = analysis.darkness  ?? 0.5;
+  currentTension   = analysis.tension   ?? 0.0;
+  currentNostalgia = analysis.nostalgia ?? 0.0;
   return { mood, analysis };
 }
 
