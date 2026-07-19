@@ -14,31 +14,37 @@ export const MODE_OFFSETS = {
   diminished:       [0, 2, 3, 5, 6, 8, 9, 11], // max instability — unsettling, horror
   locrian:          [0, 1, 3, 5, 6, 8, 10],     // ominous, unresolved, falling
   doubleHarmonic:   [0, 1, 4, 5, 7, 8, 11],     // Byzantine/Arabic — exotic, alien
+  pelog:            [0, 1, 3, 7, 8],            // Javanese — dark, unstable folklore
   phrygian:         [0, 1, 3, 5, 7, 8, 10],     // dark, tense, confrontational
   phrygianDominant: [0, 1, 4, 5, 7, 8, 10],     // flamenco — dramatic, fierce
   // ── dark / emotional ──────────────────────────────────────────
+  hungarianMinor:   [0, 2, 3, 6, 7, 8, 11],     // Gypsy — cinematic, deep Middle-Eastern sorrow
   harmonicMinor:    [0, 2, 3, 5, 7, 8, 11],     // dramatic, cinematic tension
   minor:            [0, 2, 3, 5, 7, 8, 10],     // Aeolian — heavy, melancholic
+  insensen:         [0, 1, 5, 7, 8],            // Japanese koto — modal, elegant nostalgia, fog
   pentMinor:        [0, 3, 5, 7, 10],            // raw, deep, minimal — like Burial
   // ── bittersweet / complex ─────────────────────────────────────
+  dorianB2:         [0, 1, 3, 5, 7, 9, 10],     // sci-fi, rare, dark but floating
   dorian:           [0, 2, 3, 5, 7, 9, 10],     // dark but lifted, bittersweet
   melodicMinor:     [0, 2, 3, 5, 7, 9, 11],     // smooth, jazzy, wistful
+  aeolianDominant:  [0, 2, 4, 5, 7, 8, 10],     // bittersweet — rich, reflective, hopeful shadows
   enigmatic:        [0, 1, 4, 6, 8, 10, 11],    // Verdi — rare, mysterious, alien
   wholeTone:        [0, 2, 4, 6, 8, 10],        // weightless, dreamlike, no gravity
   // ── bright / resolved ─────────────────────────────────────────
+  blues:            [0, 3, 5, 6, 7, 10],        // soul, urban nocturne, warm melancholy
   mixolydian:       [0, 2, 4, 5, 7, 9, 10],     // bluesy, warm but unresolved
   lydian:           [0, 2, 4, 6, 7, 9, 11],     // floating, dreamy — very Aphex Twin
   pentMajor:        [0, 2, 4, 7, 9],            // open, folk-like, bright
   major:            [0, 2, 4, 5, 7, 9, 11],     // warm, resolved, clear
 };
 
-// 16 modes ordered darkest/most-unstable → brightest/most-resolved
+// 22 modes ordered darkest/most-unstable → brightest/most-resolved
 // detectMood maps a continuous score onto this spectrum
 export const MODE_ORDER = [
-  'diminished','locrian','doubleHarmonic','phrygian','phrygianDominant',
-  'harmonicMinor','minor','pentMinor',
-  'dorian','melodicMinor','enigmatic','wholeTone',
-  'mixolydian','lydian','pentMajor','major'
+  'diminished','locrian','doubleHarmonic','pelog','phrygian','phrygianDominant',
+  'hungarianMinor','harmonicMinor','minor','insensen','pentMinor',
+  'dorianB2','dorian','melodicMinor','aeolianDominant','enigmatic','wholeTone',
+  'blues','mixolydian','lydian','pentMajor','major'
 ];
 
 // A much larger emotion lexicon, grouped by category rather than just pos/neg —
@@ -582,9 +588,19 @@ export function detectMood(text) {
   const isNegFa = new Array(n).fill(false);
   const selfNeg = new Array(n).fill(false); // token carries its own attached negation
 
+  // Contrast (but-clause) detection: words that signal a shift in meaning.
+  // The part AFTER the contrast word should be heavily weighted as it represents
+  // the resolution ("it's hard, but we will succeed" → hopeful).
+  const contrastWords = new Set(['اما', 'ولی', 'بلکه', 'باوجوداین', 'بااين‌حال', 'but', 'however', 'though', 'yet']);
+  let contrastTokenIdx = -1;
+
   let multLeft = 0, pendingMult = 1;
   for (let i = 0; i < n; i++) {
     const w = toks[i];
+
+    if (contrastWords.has(w)) {
+      contrastTokenIdx = i;
+    }
 
     if (NEGATORS.has(w))         isNeg[i] = true;
     if (PERSIAN_NEGATORS.has(w)) isNegFa[i] = true;
@@ -610,12 +626,29 @@ export function detectMood(text) {
     if (multLeft > 0) multLeft--;
   }
 
+  // Apply contrast weights: dampen pre-contrast emotions (0.5x), amplify post-contrast emotions (2.0x)
+  if (contrastTokenIdx !== -1) {
+    for (let i = 0; i < n; i++) {
+      if (entry[i]) {
+        if (i < contrastTokenIdx) {
+          entry[i].w *= 0.45; // significantly dampen the setup
+          entry[i].t *= 0.5;
+        } else if (i > contrastTokenIdx) {
+          entry[i].w *= 1.85; // amplify the resolution / final meaning
+          entry[i].t *= 1.5;
+        }
+      }
+    }
+  }
+
   // ── Pass 2: apply negation, then sum ──
   // English/general negators flip the emotion words that FOLLOW them.
   // Persian negators additionally flip emotion words BEFORE them in the clause,
   // because Persian negates the verb at the end ("خوشحال نیستم" = not happy).
-  // Count how many negations reach each emotion token; an EVEN count cancels
-  // out ("not not happy" stays positive), an ODD count flips it.
+  // If multiple negators affect the same word (e.g. "هیچ دلیلی برای خوشحالی نیست"
+  // where both "هیچ" and "نیست" point at "خوشحالی"), we must NOT cancel them out 
+  // into a positive; they are cumulative / reinforcing mutes. Any note impacted 
+  // by negation is flipped exactly ONCE.
   const flipCount = new Array(n).fill(0);
   for (let i = 0; i < n; i++) {
     if (selfNeg[i] && entry[i]) flipCount[i]++; // attached-prefix negation flips itself
@@ -628,7 +661,8 @@ export function detectMood(text) {
       for (let j = i - 1; j >= i - MODIFIER_SCOPE && j >= 0; j--) if (entry[j]) flipCount[j]++;
     }
   }
-  const flipped = flipCount.map(c => c % 2 === 1);
+  // If a word is touched by any negation, it flips once. Cumulation reinforces, does not cancel.
+  const flipped = flipCount.map(c => c > 0);
 
   let score = 0, tense = 0;
   for (let i = 0; i < n; i++) {
