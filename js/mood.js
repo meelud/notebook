@@ -10,28 +10,30 @@ import { FA_LEXICON, FA_LEXICON_EXTRA } from './lexicon-fa.js';
 // off-scale note sneaking in.
 
 export const MODE_OFFSETS = {
-  // very dark / unstable
-  diminished:       [0, 2, 3, 5, 6, 8, 9, 11],
-  locrian:          [0, 1, 3, 5, 6, 8, 10],
-  doubleHarmonic:   [0, 1, 4, 5, 7, 8, 11],
-  phrygian:         [0, 1, 3, 5, 7, 8, 10],
-  phrygianDominant: [0, 1, 4, 5, 7, 8, 10],
-  // dark / emotional
-  harmonicMinor:    [0, 2, 3, 5, 7, 8, 11],
-  minor:            [0, 2, 3, 5, 7, 8, 10],
-  pentMinor:        [0, 3, 5, 7, 10],
-  // bittersweet / complex
-  dorian:           [0, 2, 3, 5, 7, 9, 10],
-  melodicMinor:     [0, 2, 3, 5, 7, 9, 11],
-  enigmatic:        [0, 1, 4, 6, 8, 10, 11],
-  wholeTone:        [0, 2, 4, 6, 8, 10],
-  // bright / resolved
-  mixolydian:       [0, 2, 4, 5, 7, 9, 10],
-  lydian:           [0, 2, 4, 6, 7, 9, 11],
-  pentMajor:        [0, 2, 4, 7, 9],
-  major:            [0, 2, 4, 5, 7, 9, 11],
+  // ── very dark / unstable ──────────────────────────────────────
+  diminished:       [0, 2, 3, 5, 6, 8, 9, 11], // max instability — unsettling, horror
+  locrian:          [0, 1, 3, 5, 6, 8, 10],     // ominous, unresolved, falling
+  doubleHarmonic:   [0, 1, 4, 5, 7, 8, 11],     // Byzantine/Arabic — exotic, alien
+  phrygian:         [0, 1, 3, 5, 7, 8, 10],     // dark, tense, confrontational
+  phrygianDominant: [0, 1, 4, 5, 7, 8, 10],     // flamenco — dramatic, fierce
+  // ── dark / emotional ──────────────────────────────────────────
+  harmonicMinor:    [0, 2, 3, 5, 7, 8, 11],     // dramatic, cinematic tension
+  minor:            [0, 2, 3, 5, 7, 8, 10],     // Aeolian — heavy, melancholic
+  pentMinor:        [0, 3, 5, 7, 10],            // raw, deep, minimal — like Burial
+  // ── bittersweet / complex ─────────────────────────────────────
+  dorian:           [0, 2, 3, 5, 7, 9, 10],     // dark but lifted, bittersweet
+  melodicMinor:     [0, 2, 3, 5, 7, 9, 11],     // smooth, jazzy, wistful
+  enigmatic:        [0, 1, 4, 6, 8, 10, 11],    // Verdi — rare, mysterious, alien
+  wholeTone:        [0, 2, 4, 6, 8, 10],        // weightless, dreamlike, no gravity
+  // ── bright / resolved ─────────────────────────────────────────
+  mixolydian:       [0, 2, 4, 5, 7, 9, 10],     // bluesy, warm but unresolved
+  lydian:           [0, 2, 4, 6, 7, 9, 11],     // floating, dreamy — very Aphex Twin
+  pentMajor:        [0, 2, 4, 7, 9],            // open, folk-like, bright
+  major:            [0, 2, 4, 5, 7, 9, 11],     // warm, resolved, clear
 };
 
+// 16 modes ordered darkest/most-unstable → brightest/most-resolved
+// detectMood maps a continuous score onto this spectrum
 export const MODE_ORDER = [
   'diminished','locrian','doubleHarmonic','phrygian','phrygianDominant',
   'harmonicMinor','minor','pentMinor',
@@ -153,9 +155,8 @@ export const EMOTION_LEXICON = {
     'fight','fighting','violent','violence','chaos','chaotic','explode','explosive',
     'fuck','fucking','fucked','shit','shitty','damn','dammit','hell','ass','asshole','bitch',
     'bastard','crap','screwed','pissed','ticked off','fed up','sick of','annoyed','annoying',
-    'irritating','irritated','livid','seething','grumpy','cranky','snapped','mean','rude',
-    'jerk','dumb','stupid','idiot','moron',
-    'furious','enraged','infuriated','incensed','outraged','irate','wrathful',
+    'irritating','livid','seething','grumpy','cranky','snapped','mean','rude',
+    'jerk','dumb','stupid','idiot','moron','infuriated','incensed','irate','wrathful',
     'boiling with rage','seeing red','blood boiling','lose my temper','lost my temper',
     'snap at','blow a fuse','hit the roof','fly off the handle','pissed off','ticked',
     'riled up','worked up','on the warpath','out for blood','holding a grudge','resentful',
@@ -324,37 +325,6 @@ export const INTENSIFIERS = {
 // word like "death" inside "love you to death" is consumed by the phrase and
 // never counted as its own dark word.
 export const PHRASES = [
-
-  // ── Persian phrases — multi-word expressions that tokenizer splits ────────
-  // love
-  { p: 'دوستت دارم',        weight: 2.0, tense: 0 },
-  { p: 'دوستم داری',        weight: 1.8, tense: 0 },
-  { p: 'دوستت داشتم',       weight: 1.6, tense: 0 },
-  { p: 'عاشقت هستم',        weight: 2.0, tense: 0 },
-  { p: 'عاشقم هستی',        weight: 1.8, tense: 0 },
-  { p: 'دلم برات تنگ شده',  weight: 1.8, tense: 0 },
-  { p: 'دلم تنگ شده',       weight: 1.5, tense: 0 },
-  { p: 'بهت فکر میکنم',     weight: 1.2, tense: 0 },
-  { p: 'نمیتونم بدون تو',   weight: 1.4, tense: 0.1 },
-  { p: 'قلبم پیشته',        weight: 1.6, tense: 0 },
-  { p: 'همه چیزم تویی',     weight: 1.8, tense: 0 },
-  { p: 'فدات میشم',         weight: 1.6, tense: 0 },
-  // sadness
-  { p: 'دلم گرفته',         weight: -1.2, tense: 0.1 },
-  { p: 'حالم خوب نیست',     weight: -1.3, tense: 0.2 },
-  { p: 'خوشحال نیستم',      weight: -1.0, tense: 0.1 },
-  { p: 'غمگین هستم',        weight: -1.3, tense: 0.1 },
-  { p: 'ناراحت هستم',       weight: -1.2, tense: 0.2 },
-  { p: 'دارم گریه میکنم',   weight: -1.4, tense: 0.2 },
-  { p: 'دلم میخواد گریه کنم', weight: -1.3, tense: 0.2 },
-  // fear/anxiety
-  { p: 'میترسم از',         weight: -1.2, tense: 0.6 },
-  { p: 'ترس دارم',          weight: -1.1, tense: 0.5 },
-  { p: 'نگرانم از',         weight: -0.9, tense: 0.4 },
-  // calm/hope
-  { p: 'حالم خوبه',         weight: 1.0, tense: -0.1 },
-  { p: 'آروم هستم',         weight: 0.9, tense: -0.2 },
-  { p: 'امیدوارم که',       weight: 0.8, tense: 0 },
   // ── pure intensifiers of the dominant emotion (EN) ──
   { p: 'to death', intensify: 1.9 },
   { p: 'to bits', intensify: 1.6 },
@@ -447,7 +417,7 @@ export const PHRASES = [
   { p: 'بی نهایت', intensify: 2.0 },
   { p: 'به شدت', intensify: 1.8 },
   { p: 'حسابی', intensify: 1.5 },
-  { p: 'دیوانه وار', intensify: 1.9 },
+  { p: 'دیانه وار', intensify: 1.9 },
   { p: 'مثل دیوونه', intensify: 1.8 },
   { p: 'هر چقدر', intensify: 1.4 },
 
@@ -692,38 +662,18 @@ export function detectMood(text) {
     if (!entry[i]) continue;
     let { w: wWeight, t: wTense } = entry[i];
     if (flipped[i]) {
+      // invert polarity, dampen slightly (negated emotion ≠ full opposite),
+      // and nudge tension up (negation adds friction/ambiguity)
       wWeight = -wWeight * 0.85;
       wTense = Math.abs(wTense) * 0.5 + 0.15;
     }
-    // Positional weight: words toward the end carry more emotional weight —
-    // they represent the resolution or final feeling of the text.
-    // Early 20% → 0.7x, middle → 1.0x, last 20% → 1.4x
-    const pos = n > 1 ? i / (n - 1) : 0.5;
-    const posWeight = pos < 0.2 ? 0.7 : pos > 0.8 ? 1.4 : 1.0;
-    score += wWeight * posWeight;
-    tense += wTense * posWeight;
+    score += wWeight;
+    tense += wTense;
   }
 
   // fold in the fixed-emotion phrases detected up front
   score += phraseScore;
   tense += phraseTense;
-
-  // Bigram smoothing: when two adjacent emotion words have opposite polarity,
-  // the stronger one should dominate instead of them cancelling out.
-  // e.g. "درد عشق": pain(-0.8) + love(+1.0) → currently sum=-0.8+1.0=+0.2
-  // With bigram: dominant is love(+1.0), weaken the minor(-0.8 → -0.4), result≈+0.6
-  for (let i = 0; i < n - 1; i++) {
-    if (!entry[i] || !entry[i + 1]) continue;
-    const a = entry[i].w, b = entry[i + 1].w;
-    if (Math.sign(a) !== Math.sign(b)) {
-      // opposite polarity pair — let the stronger dominate
-      const stronger = Math.abs(a) > Math.abs(b) ? a : b;
-      const weaker   = Math.abs(a) > Math.abs(b) ? b : a;
-      // reduce the weaker contribution retroactively
-      const reduction = weaker * 0.45; // remove 45% of the weaker word's contribution
-      score -= reduction;
-    }
-  }
 
   // Apply phrase intensifiers to the DOMINANT emotion: they amplify whatever the
   // sentence already feels (e.g. "to death" makes "love" MORE loving, "scared"
@@ -744,21 +694,14 @@ export function detectMood(text) {
   const norm = score / Math.max(3, Math.sqrt(words.length));
   const tenseNorm = tense / Math.max(3, Math.sqrt(words.length));
 
-  // How much emotional signal is actually present (not just neutral filler words).
-  // Phrases count too, so a sentence like "i love you to death" is never treated
-  // as neutral even though its remaining loose words might be.
+  // { weight: 1.1, tense: 0, words: [ ... ] } density pass
   const emotionHits = entry.reduce((a, e) => a + (e ? 1 : 0), 0);
   const hadPhrase = phraseScore !== 0 || phraseTense !== 0 || pendingIntensify.length > 0 || phraseNostalgia;
   const emotionDensity = hadPhrase ? 1 : emotionHits / Math.max(1, words.length);
 
   let idx;
   if (emotionDensity < 0.12) {
-    // NEUTRAL text (no real feeling words): don't force it into the dark middle
-    // of the spectrum — that made every plain sentence sound the same & gloomy.
-    // Instead pick a *bright-to-mid* mode that VARIES by the text itself (hash),
-    // so ordinary writing sounds open, and different neutral texts differ.
     const h = hashText(text);
-    // choose among the brighter half (indices 8..15 = dorian→major side)
     idx = 8 + (h % (MODE_ORDER.length - 8));
   } else {
     // map continuous score onto 16-mode spectrum
@@ -769,23 +712,18 @@ export function detectMood(text) {
   }
 
   // Dominant emotion override: if one emotion category provides ≥60% of
-  // all emotion hits, it steers the final mode index toward its natural position.
-  // This prevents e.g. a love poem with a few sad words from landing in the middle.
-  if (emotionDensity >= 0.12) {
+  // the text's emotion words, draw the selected mode toward that category's nominal scale.
+  if (emotionDensity >= 0.12 && words.length > 0) {
     const catCounts = {};
-    // Use phraseScore (already computed above) to seed catCounts —
-    // this is more reliable than re-detecting phrases with normalized toks.
-    if (phraseScore > 1.2)  catCounts['love']    = (catCounts['love']    || 0) + 3;
-    else if (phraseScore > 0.2) catCounts['calm'] = (catCounts['calm']   || 0) + 2;
-    if (phraseScore < -0.5) catCounts['sadness']  = (catCounts['sadness']|| 0) + 3;
-    if (phraseTense  > 0.3) catCounts['fear']     = (catCounts['fear']   || 0) + 2;
-    for (let i = 0; i < n; i++) {
-      if (!entry[i]) continue;
-      const w = toks[i];
-      for (const [cat, data] of Object.entries(EMOTION_LEXICON)) {
-        if (data.words && data.words.includes(w)) {
-          catCounts[cat] = (catCounts[cat] || 0) + 1;
-          break;
+    for (const w of toks) {
+      const hit = lookupWord(w);
+      if (hit) {
+        // find category
+        for (const [cat, data] of Object.entries(EMOTION_LEXICON)) {
+          if (data.words.includes(w) || (stripPersianSuffix(w) && data.words.includes(stripPersianSuffix(w)))) {
+            catCounts[cat] = (catCounts[cat] || 0) + 1;
+            break;
+          }
         }
       }
     }
@@ -794,7 +732,6 @@ export function detectMood(text) {
       const [topCat, topCount] = Object.entries(catCounts).sort((a, b) => b[1] - a[1])[0];
       const dominance = topCount / totalHits;
       if (dominance >= 0.5) {  // 50% threshold — more responsive for short FA texts
-        // pull idx 30% toward where this category naturally sits
         const catTargets = {
           joy:       15, // major — bright, resolved
           love:      13, // lydian — floating, warm, Aphex-ish
@@ -802,6 +739,7 @@ export function detectMood(text) {
           hope:      12, // mixolydian — warm, resolved-ish
           sadness:    6, // minor — Aeolian — heavy, melancholic
           fear:       3, // phrygian — tense
+          danger:     3, // phrygian
           anger:      1, // locrian — unstable
           dark:       2, // doubleHarmonic — dark, tension
           nostalgia:  8, // dorian — bittersweet, lifted

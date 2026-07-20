@@ -1,4 +1,4 @@
-import { buildScale, detectMood, analyzeText, buildVoicing, hashText, ROOT_CANDIDATES_LOW, ROOT_CANDIDATES_MID, MODE_ORDER } from './mood.js';
+import { buildScale, detectMood, analyzeText, buildVoicing } from './mood.js';
 
 // ──────────────────────────────────────────────────────────────
 //  Audio Context & Master Bus
@@ -800,16 +800,16 @@ export const VOICES = {
 
   vinyl(f, dur, vol, dest, wordLen) {
     const c = ac;
-    const buf = getOrCreateNoiseBuffer('vinyl', dur, (data, bufLen) => {
+    const buf = getOrCreateNoiseBuffer('vinyl_crackle', dur, (data, bufLen) => {
       for (let i = 0; i < bufLen; i++) {
-        data[i] = (_rng() * 2 - 1) * 0.03 + (chance(0.005) ? rnd(-0.3, 0.3) : 0);
+        data[i] = chance(0.003) ? rnd(-0.15, 0.15) : (_rng() * 2 - 1) * 0.008;
       }
     });
     const src = c.createBufferSource(), g = c.createGain();
     const lp = c.createBiquadFilter();
-    lp.type = 'lowpass'; lp.frequency.value = 2000;
+    lp.type = 'lowpass'; lp.frequency.value = 2500;
     const hp = c.createBiquadFilter();
-    hp.type = 'highpass'; hp.frequency.value = 200;
+    hp.type = 'highpass'; hp.frequency.value = 300;
     src.buffer = buf;
     const peakVol = vol * 0.12 * rnd(0.85, 1.0);
     g.gain.setValueAtTime(peakVol, c.currentTime);
@@ -824,7 +824,7 @@ export const VOICES = {
 
   tape(f, dur, vol, dest, wordLen) {
     const c = ac;
-    const buf = getOrCreateNoiseBuffer('tape', dur, (data, bufLen) => {
+    const buf = getOrCreateNoiseBuffer('tape_hiss', dur, (data, bufLen) => {
       let prev = 0;
       for (let i = 0; i < bufLen; i++) {
         prev = prev * 0.95 + (_rng() * 2 - 1) * 0.05;
@@ -878,10 +878,7 @@ const VOICE_GROUPS = {
 // ──────────────────────────────────────────────────────────────
 let currentScale = [];
 let currentMode = 'minor';
-let ambientDensity   = 0;
-let currentDarkness  = 0.5; // 0=bright .. 1=dark — from analyzeText
-let currentTension   = 0.0; // 0=calm  .. 1=tense
-let currentNostalgia = 0.0; // 0=none  .. 1=strong
+let ambientDensity = 0;
 
 export function playWord(word, sentenceType, progress, punctBefore, wordLen) {
   const c = ensureCtx();
@@ -899,30 +896,14 @@ export function playWord(word, sentenceType, progress, punctBefore, wordLen) {
     dest = getMasterBus();
   }
 
-  // Voice group: sentence type is primary. Analysis values add a secondary bias only —
-  // they shift probabilities, never hard-override the sentence type choice.
-  let group = VOICE_GROUPS[sentenceType] || VOICE_GROUPS.statement;
-  if (currentTension > 0.6 && sentenceType === 'statement') {
-    // tense statements lean toward edgier exclamation voices
-    if (_rng() < 0.45) group = VOICE_GROUPS.exclamation;
-  } else if (currentDarkness > 0.65 && sentenceType === 'question') {
-    // dark questions lean away from bright bell/glass/harp voices
-    if (_rng() < 0.4) group = VOICE_GROUPS.statement;
-  }
+  const group = VOICE_GROUPS[sentenceType] || VOICE_GROUPS.statement;
   const voiceName = pick(group);
   const voiceFn = VOICES[voiceName];
   if (!voiceFn) return { played: false, silenceDur: 0 };
 
   const noteIdx = stepwiseNoteIndex(currentScale.length || 7);
   const baseFreq = currentScale[noteIdx] || 220;
-  // Octave bias: darkness + nostalgia pull register down, brightness pulls up.
-  // Purely probabilistic — never a hard override.
-  const darkBias  = Math.max(0, currentDarkness  - 0.4) * 0.35;
-  const nostBias  = currentNostalgia * 0.12;
-  const lowProb   = 0.08 + darkBias + nostBias;
-  const highProb  = Math.max(0, 0.15 - darkBias * 0.8);
-  const roll = _rng();
-  const octaveShift = roll < lowProb ? 0.5 : roll < lowProb + highProb ? 2 : 1;
+  const octaveShift = chance(0.15) ? (chance(0.5) ? 2 : 0.5) : 1;
   const freq = baseFreq * octaveShift;
 
   const wl = wordLen || word.length || 4;
@@ -941,19 +922,8 @@ export function setMood(text) {
   const mood = detectMood(text);
   const analysis = analyzeText(text);
   currentMode = mood.mode;
-  // Pick root from text hash so same text = same root (deterministic).
-  // Darkness selects the register: dark text uses the low octave candidates,
-  // bright/neutral text uses the mid register. This is the missing link between
-  // emotional content and the actual pitch of the piece.
-  const h = hashText(text);
-  const dark = analysis.darkness ?? 0.5;
-  const candidates = dark > 0.55 ? ROOT_CANDIDATES_LOW : ROOT_CANDIDATES_MID;
-  const rootHz = candidates[h % candidates.length];
-  currentScale = buildScale(rootHz, currentMode);
-  ambientDensity   = analysis.density   ?? 0;
-  currentDarkness  = analysis.darkness  ?? 0.5;
-  currentTension   = analysis.tension   ?? 0.0;
-  currentNostalgia = analysis.nostalgia ?? 0.0;
+  currentScale = buildScale(220, currentMode);
+  ambientDensity = analysis.density || 0;
   return { mood, analysis };
 }
 
@@ -968,12 +938,8 @@ const BAR_BEATS = 4;
 function beatDur() { return BEAT_SEC; }
 function barDur() { return BEAT_SEC * BAR_BEATS; }
 function moodDarkness() {
-  const idx = MODE_ORDER.indexOf(currentMode);
-  // 🚨 BUG FIX: MODE_ORDER goes from darkest (index 0) to brightest (index 21).
-  // Therefore, 'idx' represents BRIGHTNESS, not darkness. 
-  // We must invert it (1 - ...) so darkest modes yield 1.0 (heavy muffle, sub-bass)
-  // and brightest modes yield 0.0 (crystal-clear registers, airy drone).
-  return idx < 0 ? 0.5 : 1 - (idx / (MODE_ORDER.length - 1));
+  const idx = ['lydian', 'major', 'mixolydian', 'dorian', 'melodicMinor', 'minor', 'phrygian', 'locrian', 'diminished', 'phrygianDominant', 'doubleHarmonic', 'enigmatic', 'harmonicMinor', 'pentMajor', 'pentMinor', 'wholeTone'].indexOf(currentMode);
+  return idx < 0 ? 0.5 : idx / 15;
 }
 
 let ambientRunning = false;
@@ -992,13 +958,10 @@ export function startAmbient(dests) {
     const f = (currentScale[0] || 220) / 2;
     const osc = c.createOscillator(), g = c.createGain();
     const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 250 - moodDarkness() * 80;
-    osc.type = 'sawtooth';
-    osc.frequency.value = f;
+    osc.type = 'sawtooth'; osc.frequency.value = f;
     osc.detune.value = rnd(-6, 6);
     const dur = barDur() * rnd(2, 4);
-    // Dynamic volume matching: reduce the heavy deep drone volume in bright moods
-    // so the mix becomes clean, airy, and joyful, while retaining deep weight in dark moods.
-    const peak = rnd(0.02, 0.04) * (0.5 + ambientDensity * 0.5) * (0.2 + moodDarkness() * 0.8);
+    const peak = rnd(0.02, 0.04) * (0.5 + ambientDensity * 0.5);
     g.gain.setValueAtTime(0, c.currentTime);
     g.gain.linearRampToValueAtTime(peak, c.currentTime + dur * 0.3);
     g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur);
@@ -1022,8 +985,7 @@ export function startAmbient(dests) {
     const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2500;
     const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 300;
     src.buffer = buf;
-    // Quiet down vinyl crackle when the music is bright so it feels less koder/dirty
-    const peak = rnd(0.015, 0.03) * (0.3 + ambientDensity * 0.4) * (0.3 + moodDarkness() * 0.7);
+    const peak = rnd(0.015, 0.03) * (0.3 + ambientDensity * 0.4);
     g.gain.setValueAtTime(peak, c.currentTime);
     g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur);
     src.connect(lp); lp.connect(hp); hp.connect(g);
@@ -1047,8 +1009,7 @@ export function startAmbient(dests) {
     const src = c.createBufferSource(), g = c.createGain();
     const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1800;
     src.buffer = buf;
-    // Lower tape hiss in bright moods
-    const peak = rnd(0.008, 0.018) * (0.4 + ambientDensity * 0.3) * (0.3 + moodDarkness() * 0.7);
+    const peak = rnd(0.008, 0.018) * (0.4 + ambientDensity * 0.3);
     g.gain.setValueAtTime(0, c.currentTime);
     g.gain.linearRampToValueAtTime(peak, c.currentTime + dur * 0.2);
     g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur);
