@@ -939,10 +939,22 @@ export function setMood(text) {
   currentDarkness  = analysis.darkness  ?? 0.5;
   currentTension   = analysis.tension   ?? 0.0;
   currentNostalgia = analysis.nostalgia ?? 0.0;
-  // Rebuild reverb with darkness-aware tail length so dark/nostalgic text
-  // sits in a deeper, more atmospheric space.
+
+  // Re-implement the original deterministic pitch BIAS formula from last night.
+  // This is the true missing link: it smoothly nudges the root key down by up to 4 scale
+  // degrees when sentiment is negative (dark text), and leaves it high/bright when positive,
+  // selecting low templates (ROOT_CANDIDATES_LOW) for dark modes and mid templates for bright.
+  const h = hashText(text);
+  const modeIdx = MODE_ORDER.indexOf(currentMode);
+  const candidates = modeIdx <= 5 ? ROOT_CANDIDATES_LOW : ROOT_CANDIDATES_MID;
+  
+  const baseIdx = h % candidates.length;
+  const bias = Math.round((1 - Math.max(0, Math.min(1, (analysis.valence + 1.5) / 3.0))) * 4);
+  const rootIdx = (Math.max(0, baseIdx - bias)) % candidates.length;
+  const rootHz = candidates[rootIdx];
+
   buildReverb(currentDarkness);
-  currentScale = buildScale(220, currentMode);
+  currentScale = buildScale(rootHz, currentMode);
   ambientDensity = analysis.density || 0;
   return { mood, analysis };
 }
