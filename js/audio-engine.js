@@ -998,7 +998,10 @@ export function startAmbient(dests) {
     const f = (currentScale[0] || 220) / 2;
     const osc = c.createOscillator(), g = c.createGain();
     const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 250 - moodDarkness() * 80;
-    osc.type = 'sawtooth'; osc.frequency.value = f;
+    // Dynamic voice shape matching: use a clear, warm sine wave for bright/joyful moods
+    // to keep the background serene and airy, and switch to a heavy sawtooth for dark moods.
+    osc.type = moodDarkness() > 0.45 ? 'sawtooth' : 'sine';
+    osc.frequency.value = f;
     osc.detune.value = rnd(-6, 6);
     const dur = barDur() * rnd(2, 4);
     // Dynamic volume matching: reduce the heavy deep drone volume in bright moods
