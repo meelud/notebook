@@ -888,6 +888,11 @@ const VOICE_GROUPS = {
 let currentScale = [];
 let currentMode = 'minor';
 let ambientDensity = 0;
+// These were used by setMood/getSilenceDuration but never declared, which threw
+// a ReferenceError the moment Play was pressed and stopped all sound. Declared here.
+let currentDarkness = 0.5;
+let currentTension = 0.0;
+let currentNostalgia = 0.0;
 
 export function playWord(word, sentenceType, progress, punctBefore, wordLen) {
   const c = ensureCtx();
