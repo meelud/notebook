@@ -2,7 +2,7 @@ import { hashText } from './mood.js';
 import {
   seedRng, playWord, setMood,
   startAmbient, stopAmbient, ensureCtx, getMasterBus,
-  getSilenceDuration, rnd, clearNoiseCache,
+  getSilenceDuration, rnd,
 } from './audio-engine.js';
 
 // ──────────────────────────────────────────────────────────────
@@ -76,10 +76,6 @@ function buildRenderOverlay(text, tokens) {
   if (!renderEl) return;
   renderEl.innerHTML = '';
   wordSpans = [];
-  // Mirror the editor's resolved text direction onto the overlay so RTL
-  // (Persian) text flows right-to-left and lines up with the textarea.
-  const isRTL = /[\u0600-\u06FF\u0750-\u077F]/.test(text);
-  renderEl.setAttribute('dir', isRTL ? 'rtl' : 'ltr');
   let cursor = 0;
   for (const tok of tokens) {
     // find this token's word in the original text starting from cursor,
@@ -87,13 +83,10 @@ function buildRenderOverlay(text, tokens) {
     const at = text.indexOf(tok.word, cursor);
     if (at === -1) continue;
     if (at > cursor) {
-      const interstitial = text.slice(cursor, at);
-      renderEl.appendChild(document.createTextNode(interstitial));
+      renderEl.appendChild(document.createTextNode(text.slice(cursor, at)));
     }
     const span = document.createElement('span');
     span.textContent = tok.word;
-    // NOTE: plain inline (not inline-block) so words follow the natural
-    // bidi flow — inline-block was forcing left-to-right word order on RTL text.
     renderEl.appendChild(span);
     wordSpans.push(span);
     cursor = at + tok.word.length;
@@ -124,13 +117,10 @@ function clearRenderOverlay() {
 //  Playback loop
 // ──────────────────────────────────────────────────────────────
 function startPlayback() {
-  // Atomic guard: ignore re-entrant calls from rapid clicks or Shift+Enter repeats.
-  if (playing) return;
-
   const text = editor.value || editor.innerText || '';
   if (!text.trim()) return;
 
-  playing = true; // set immediately to close the race window
+  playing = true;
   if (playBtn) playBtn.disabled = true;
   if (stopBtn) stopBtn.disabled = false;
   if (wcEl) wcEl.textContent = '▶ playing';
@@ -175,18 +165,17 @@ function startPlayback() {
     // Check for silence/breath before this word
     const silence = getSilenceDuration(token.punctBefore, idx, totalWords);
     if (silence > 0) {
-      // Capture idx NOW before incrementing so the closure highlights the right word.
-      const silentIdx = idx;
-      idx++; // advance the counter so playNext moves on after the timeout
+      idx++; // consume the token but play silence
+      // After silence, replay this word (or skip if it's just punctuation)
       playTimeout = setTimeout(() => {
+        // Now play the actual word after the breath
         if (!playing) return;
         const result = playWord(token.word, sentenceType, progress, null, token.len);
-        highlightWord(silentIdx); // highlight the word that's actually playing
+        highlightWord(idx - 1);
         const wordDur = result.duration || 0.4;
-        // The silence already contains the natural breath duration. Do NOT add the
-        // relative gap offset of the next note on top of it, otherwise we introduce
-        // an artificial lag that ruptures the musical rhythm. Only delay by the breath.
-        playTimeout = setTimeout(playNext, silence * 1000);
+        // Base timing between words
+        const gap = wordDur * rnd(0.5, 0.8) + 0.05;
+        playTimeout = setTimeout(playNext, (silence + gap) * 1000);
       }, silence * 1000);
       return;
     }
@@ -212,38 +201,18 @@ function startPlayback() {
 }
 
 function stopPlayback() {
-  // Idempotency: silently ignore if already fully stopped.
-  if (!playing && !playTimeout) return;
-
-  // Clear scheduling state first so no pending callback fires mid-teardown.
   playing = false;
   if (playTimeout) { clearTimeout(playTimeout); playTimeout = null; }
-
-  // Stop audio layers, then recording.
   stopAmbient();
-  stopRecording();
-
-  // UI cleanup.
   clearRenderOverlay();
   hideProgress();
   stopViz();
-
-  // Button states.
-  if (stopBtn) stopBtn.disabled = true;
-  if (saveBtn) saveBtn.disabled = (recLength === 0);
-
-  // Restore word-count display.
   updatePlayState();
   updateWordCount();
-
-  // Free cached noise buffers so a long session doesn't hold RAM between plays.
-  clearNoiseCache();
+  if (stopBtn) stopBtn.disabled = true;
+  if (saveBtn) saveBtn.disabled = (recLength === 0);
+  stopRecording();
 }
-
-// Mobile: when the tab goes to the background, release cached audio RAM.
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden) clearNoiseCache();
-});
 
 // ──────────────────────────────────────────────────────────────
 //  Recording — raw PCM capture → WAV export (zero dependency)
@@ -285,20 +254,13 @@ function startRecording() {
 }
 
 function stopRecording() {
-  if (!recProcessor) return;
-  // Two separate try/catch blocks: if the first disconnect throws (already
-  // detached), the second must still run so we never leak a live processor.
-  try {
-    getMasterBus().disconnect(recProcessor);
-  } catch (e) {
-    // Already disconnected or never fully connected — non-fatal.
+  if (recProcessor) {
+    try {
+      getMasterBus().disconnect(recProcessor);
+      recProcessor.disconnect();
+    } catch (e) {}
+    recProcessor = null;
   }
-  try {
-    recProcessor.disconnect();
-  } catch (e) {
-    // Already disconnected — non-fatal.
-  }
-  recProcessor = null;
 }
 
 // Merge chunked Float32 buffers into one
@@ -442,14 +404,6 @@ function saveRecording() {
     }, 'image/png');
   }).catch(() => {});
   if (wcEl) wcEl.textContent = '💾 saved!';
-
-  // Free the raw PCM capture buffers now that the WAV is encoded — they can be
-  // tens of MB for a long piece and would otherwise linger until the next record.
-  // (recSourceText is intentionally kept so the async cover render above still works.)
-  recBuffersL = [];
-  recBuffersR = [];
-  recLength = 0;
-
   setTimeout(updateWordCount, 2000);
 }
 
@@ -532,81 +486,34 @@ document.addEventListener('keydown', (e) => {
 // ──────────────────────────────────────────────────────────────
 function updateWordCount() {
   const text = editor ? (editor.value || '') : '';
-
-  // Count with the SAME tokenizer playback uses, so the number matches the
-  // notes actually played (handles Persian ZWNJ, emoji, and punctuation).
-  const count = tokenize(text).length;
-
-  // Only update DOM when not playing (prevents a "0 words" flash mid-playback).
-  if (wcEl && !playing) {
-    const one = (typeof Intl !== 'undefined' && Intl.PluralRules)
-      ? new Intl.PluralRules('en').select(count) === 'one'
-      : count === 1;
-    wcEl.textContent = `${count} ${one ? 'word' : 'words'}`;
-  }
+  const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+  if (wcEl && !playing) wcEl.textContent = `${words} word${words !== 1 ? 's' : ''}`;
 }
 
 // ──────────────────────────────────────────────────────────────
 //  Progress bar & Visualizer
 // ──────────────────────────────────────────────────────────────
 function showProgress(fraction) {
-  // Guard: elements may be absent in test environments or future layouts.
-  if (!progEl || !progFill) return;
-  // Clamp: fraction may be NaN/Infinity or out of [0,1] due to drift in long loops.
-  const safeFraction = Number.isFinite(fraction) ? fraction : 0;
-  const pct = Math.max(0, Math.min(100, safeFraction * 100));
-  // Batch the DOM write into the next animation frame so width updates align
-  // with the monitor refresh (smoother bar, no layout thrash mid-loop).
-  requestAnimationFrame(() => {
-    // A frame queued just before stopPlayback() must not re-show the bar.
-    if (!playing) return;
-    progEl.classList.add('on');
-    progFill.style.width = `${pct}%`;
-  });
+  if (progEl) progEl.classList.add('on');
+  if (progFill) progFill.style.width = `${Math.min(fraction * 100, 100)}%`;
 }
 function hideProgress() {
   if (progEl) progEl.classList.remove('on');
   if (progFill) progFill.style.width = '0%';
 }
 
-// Real audio-reactive visualizer: an AnalyserNode reads the master bus and
-// requestAnimationFrame drives the bars in sync with the monitor refresh rate.
-let analyserNode = null;
-let vizRafId = null;
-
-function setupAnalyser() {
-  const ctx = ensureCtx();
-  if (!analyserNode) {
-    analyserNode = ctx.createAnalyser();
-    analyserNode.fftSize = 64;                 // small = fast, 32 bins
-    analyserNode.smoothingTimeConstant = 0.85; // smooth, not jumpy
-    getMasterBus().connect(analyserNode);      // read-only tap; audio unchanged
-  }
-  return analyserNode;
-}
-
+let vizInterval = null;
 function startViz() {
   if (vizEl) vizEl.classList.add('on');
-  const analyser = setupAnalyser();
-  const dataArray = new Uint8Array(analyser.frequencyBinCount);
-  const barCount = vizBars.length;
-
-  function draw() {
-    if (!playing) return;
-    analyser.getByteFrequencyData(dataArray);
-    vizRafId = requestAnimationFrame(draw);
-    const step = Math.max(1, Math.floor(dataArray.length / barCount));
-    vizBars.forEach((bar, i) => {
-      const value = dataArray[i * step] || 0; // 0–255
-      bar.style.height = `${1.5 + (value / 255) * 16.5}px`;
+  vizInterval = setInterval(() => {
+    vizBars.forEach(bar => {
+      bar.style.height = `${2 + Math.random() * 14}px`;
     });
-  }
-  draw();
+  }, 120);
 }
-
 function stopViz() {
   if (vizEl) vizEl.classList.remove('on');
-  if (vizRafId) { cancelAnimationFrame(vizRafId); vizRafId = null; }
+  if (vizInterval) { clearInterval(vizInterval); vizInterval = null; }
   vizBars.forEach(bar => { bar.style.height = '1.5px'; });
 }
 
@@ -632,27 +539,14 @@ function updatePlayState() {
   const text = editor ? (editor.value || '') : '';
   if (playBtn) playBtn.disabled = !text.trim();
 }
-// Set the textarea's text direction from its content. CSS `direction: auto`
-// is unreliable on <textarea>; the HTML `dir="auto"` attribute (or an explicit
-// rtl/ltr) is the correct, cross-browser way. Persian text → RTL.
-function updateEditorDir() {
-  if (!editor) return;
-  const t = editor.value || '';
-  const isRTL = /[\u0600-\u06FF\u0750-\u077F]/.test(t);
-  editor.setAttribute('dir', isRTL ? 'rtl' : 'ltr');
-}
-
 if (editor) {
-  editor.setAttribute('dir', 'auto'); // sensible default before any input
   editor.addEventListener('input', () => {
     // If the user edits the text mid-playback, stop — the audio no longer
     // matches what's on screen, so continuing would be confusing.
     if (playing) stopPlayback();
-    updateEditorDir();
     updatePlayState();
     updateWordCount();
   });
-  updateEditorDir();
   updatePlayState();
   updateWordCount();
 }
