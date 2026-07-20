@@ -969,7 +969,11 @@ function beatDur() { return BEAT_SEC; }
 function barDur() { return BEAT_SEC * BAR_BEATS; }
 function moodDarkness() {
   const idx = MODE_ORDER.indexOf(currentMode);
-  return idx < 0 ? 0.5 : idx / (MODE_ORDER.length - 1);
+  // 🚨 BUG FIX: MODE_ORDER goes from darkest (index 0) to brightest (index 21).
+  // Therefore, 'idx' represents BRIGHTNESS, not darkness. 
+  // We must invert it (1 - ...) so darkest modes yield 1.0 (heavy muffle, sub-bass)
+  // and brightest modes yield 0.0 (crystal-clear registers, airy drone).
+  return idx < 0 ? 0.5 : 1 - (idx / (MODE_ORDER.length - 1));
 }
 
 let ambientRunning = false;
