@@ -885,8 +885,9 @@ export function analyzeText(text) {
 // Root candidates — two octave layers so dark moods can go lower, bright moods higher
 export function noteFreq(semisFromA2) { return 110.00 * Math.pow(2, semisFromA2 / 12); }
 // A1 through G#2 (low register) + A2 through G#3 (mid register) = 24 roots
-export const ROOT_CANDIDATES_LOW  = Array.from({ length: 12 }, (_, i) => noteFreq(i - 12)); // A1–G#2
-export const ROOT_CANDIDATES_MID  = Array.from({ length: 12 }, (_, i) => noteFreq(i));      // A2–G#3
+export const ROOT_CANDIDATES_LOW  = Array.from({ length: 12 }, (_, i) => noteFreq(i - 12)); // A1–G#2 (low registers - dark)
+export const ROOT_CANDIDATES_MID  = Array.from({ length: 12 }, (_, i) => noteFreq(i));      // A2–G#3 (mid registers - neutral/sombre)
+export const ROOT_CANDIDATES_HIGH = Array.from({ length: 12 }, (_, i) => noteFreq(i + 12));     // A3–G#4 (high registers - bright/joyful)
 
 // chord built from scale degrees 1-3-5 (and optionally 7) of the current scale — always in-key
 export function chordFromScale(scale, degreeRoot) {

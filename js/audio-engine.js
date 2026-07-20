@@ -1,4 +1,4 @@
-import { buildScale, detectMood, analyzeText, buildVoicing, hashText, ROOT_CANDIDATES_LOW, ROOT_CANDIDATES_MID, MODE_ORDER } from './mood.js';
+import { buildScale, detectMood, analyzeText, buildVoicing, hashText, ROOT_CANDIDATES_LOW, ROOT_CANDIDATES_MID, ROOT_CANDIDATES_HIGH, MODE_ORDER } from './mood.js';
 
 // ──────────────────────────────────────────────────────────────
 //  Audio Context & Master Bus
@@ -947,7 +947,13 @@ export function setMood(text) {
   // emotional content and the actual pitch of the piece.
   const h = hashText(text);
   const dark = analysis.darkness ?? 0.5;
-  const candidates = dark > 0.55 ? ROOT_CANDIDATES_LOW : ROOT_CANDIDATES_MID;
+  // Three-tier register mapping:
+  // - Very bright (dark < 0.35) uses HIGH register (A3-G#4) for crisp, angelic, joyful resonance.
+  // - Dark (dark > 0.60) uses LOW register (A1-G#2) for deep, rumbling, heavy sombre weight.
+  // - Otherwise, MID register (A2-G#3) for complex, bittersweet, neutral space.
+  const candidates = dark < 0.35 
+    ? ROOT_CANDIDATES_HIGH 
+    : (dark > 0.60 ? ROOT_CANDIDATES_LOW : ROOT_CANDIDATES_MID);
   const rootHz = candidates[h % candidates.length];
   currentScale = buildScale(rootHz, currentMode);
   ambientDensity   = analysis.density   ?? 0;
