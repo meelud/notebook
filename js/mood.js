@@ -10,41 +10,33 @@ import { FA_LEXICON, FA_LEXICON_EXTRA } from './lexicon-fa.js';
 // off-scale note sneaking in.
 
 export const MODE_OFFSETS = {
-  // ── very dark / unstable ──────────────────────────────────────
-  diminished:       [0, 2, 3, 5, 6, 8, 9, 11], // max instability — unsettling, horror
-  locrian:          [0, 1, 3, 5, 6, 8, 10],     // ominous, unresolved, falling
-  doubleHarmonic:   [0, 1, 4, 5, 7, 8, 11],     // Byzantine/Arabic — exotic, alien
-  pelog:            [0, 1, 3, 7, 8],            // Javanese — dark, unstable folklore
-  phrygian:         [0, 1, 3, 5, 7, 8, 10],     // dark, tense, confrontational
-  phrygianDominant: [0, 1, 4, 5, 7, 8, 10],     // flamenco — dramatic, fierce
-  // ── dark / emotional ──────────────────────────────────────────
-  hungarianMinor:   [0, 2, 3, 6, 7, 8, 11],     // Gypsy — cinematic, deep Middle-Eastern sorrow
-  harmonicMinor:    [0, 2, 3, 5, 7, 8, 11],     // dramatic, cinematic tension
-  minor:            [0, 2, 3, 5, 7, 8, 10],     // Aeolian — heavy, melancholic
-  insensen:         [0, 1, 5, 7, 8],            // Japanese koto — modal, elegant nostalgia, fog
-  pentMinor:        [0, 3, 5, 7, 10],            // raw, deep, minimal — like Burial
-  // ── bittersweet / complex ─────────────────────────────────────
-  dorianB2:         [0, 1, 3, 5, 7, 9, 10],     // sci-fi, rare, dark but floating
-  dorian:           [0, 2, 3, 5, 7, 9, 10],     // dark but lifted, bittersweet
-  melodicMinor:     [0, 2, 3, 5, 7, 9, 11],     // smooth, jazzy, wistful
-  aeolianDominant:  [0, 2, 4, 5, 7, 8, 10],     // bittersweet — rich, reflective, hopeful shadows
-  enigmatic:        [0, 1, 4, 6, 8, 10, 11],    // Verdi — rare, mysterious, alien
-  wholeTone:        [0, 2, 4, 6, 8, 10],        // weightless, dreamlike, no gravity
-  // ── bright / resolved ─────────────────────────────────────────
-  blues:            [0, 3, 5, 6, 7, 10],        // soul, urban nocturne, warm melancholy
-  mixolydian:       [0, 2, 4, 5, 7, 9, 10],     // bluesy, warm but unresolved
-  lydian:           [0, 2, 4, 6, 7, 9, 11],     // floating, dreamy — very Aphex Twin
-  pentMajor:        [0, 2, 4, 7, 9],            // open, folk-like, bright
-  major:            [0, 2, 4, 5, 7, 9, 11],     // warm, resolved, clear
+  // very dark / unstable
+  diminished:       [0, 2, 3, 5, 6, 8, 9, 11],
+  locrian:          [0, 1, 3, 5, 6, 8, 10],
+  doubleHarmonic:   [0, 1, 4, 5, 7, 8, 11],
+  phrygian:         [0, 1, 3, 5, 7, 8, 10],
+  phrygianDominant: [0, 1, 4, 5, 7, 8, 10],
+  // dark / emotional
+  harmonicMinor:    [0, 2, 3, 5, 7, 8, 11],
+  minor:            [0, 2, 3, 5, 7, 8, 10],
+  pentMinor:        [0, 3, 5, 7, 10],
+  // bittersweet / complex
+  dorian:           [0, 2, 3, 5, 7, 9, 10],
+  melodicMinor:     [0, 2, 3, 5, 7, 9, 11],
+  enigmatic:        [0, 1, 4, 6, 8, 10, 11],
+  wholeTone:        [0, 2, 4, 6, 8, 10],
+  // bright / resolved
+  mixolydian:       [0, 2, 4, 5, 7, 9, 10],
+  lydian:           [0, 2, 4, 6, 7, 9, 11],
+  pentMajor:        [0, 2, 4, 7, 9],
+  major:            [0, 2, 4, 5, 7, 9, 11],
 };
 
-// 22 modes ordered darkest/most-unstable → brightest/most-resolved
-// detectMood maps a continuous score onto this spectrum
 export const MODE_ORDER = [
-  'diminished','locrian','doubleHarmonic','pelog','phrygian','phrygianDominant',
-  'hungarianMinor','harmonicMinor','minor','insensen','pentMinor',
-  'dorianB2','dorian','melodicMinor','aeolianDominant','enigmatic','wholeTone',
-  'blues','mixolydian','lydian','pentMajor','major'
+  'diminished','locrian','doubleHarmonic','phrygian','phrygianDominant',
+  'harmonicMinor','minor','pentMinor',
+  'dorian','melodicMinor','enigmatic','wholeTone',
+  'mixolydian','lydian','pentMajor','major'
 ];
 
 // A much larger emotion lexicon, grouped by category rather than just pos/neg —
@@ -769,11 +761,9 @@ export function detectMood(text) {
     // choose among the brighter half (indices 8..15 = dorian→major side)
     idx = 8 + (h % (MODE_ORDER.length - 8));
   } else {
-    // map continuous score onto 22-mode spectrum with enhanced line mapping
-    // range of [-1.1, 1.1] prevents compression of average positive/negative texts
-    const clamped = Math.max(-1.1, Math.min(1.1, norm));
-    const normPercent = (clamped + 1.1) / 2.2;
-    idx = Math.round(Math.max(0, Math.min(1, normPercent)) * (MODE_ORDER.length - 1));
+    // map continuous score onto 16-mode spectrum
+    const clamped = Math.max(-1.5, Math.min(1.5, norm));
+    idx = Math.round(((clamped + 1.5) / 3.0) * (MODE_ORDER.length - 1));
     // high tension → pull toward the exotic/unstable cluster (first 5 modes)
     if (tenseNorm > 0.5 && idx > 3) idx = Math.max(1, idx - 4);
   }
@@ -806,19 +796,19 @@ export function detectMood(text) {
       if (dominance >= 0.5) {  // 50% threshold — more responsive for short FA texts
         // pull idx 30% toward where this category naturally sits
         const catTargets = {
-          joy:       20, // pentMajor — bright, open
-          love:      19, // lydian — floating, warm, Aphex-ish
-          calm:      16, // wholeTone — weightless, serene
-          hope:      18, // mixolydian — warm, resolved-ish
-          sadness:    8, // minor — heavy, melancholic
-          fear:       4, // phrygian — tense, confrontational
-          anger:      1, // locrian — most unstable
-          dark:       3, // pelog — dark folklore, unstable
-          nostalgia: 12, // dorian — bittersweet, lifted
-          confusion: 15, // enigmatic — alien, unresolved
-          surprise:  17, // blues — unexpected warmth
-          vice:       9, // insensen — modal, moody
-          casual:    16, // wholeTone — neutral, open
+          joy:       15, // major — bright, resolved
+          love:      13, // lydian — floating, warm, Aphex-ish
+          calm:      11, // wholeTone — weightless, serene
+          hope:      12, // mixolydian — warm, resolved-ish
+          sadness:    6, // minor — Aeolian — heavy, melancholic
+          fear:       3, // phrygian — tense
+          anger:      1, // locrian — unstable
+          dark:       2, // doubleHarmonic — dark, tension
+          nostalgia:  8, // dorian — bittersweet, lifted
+          confusion: 10, // enigmatic — unresolved
+          surprise:  12, // mixolydian
+          vice:       6, // minor
+          casual:    11, // wholeTone — neutral, open
         };
         const target = catTargets[topCat];
         if (target !== undefined) {

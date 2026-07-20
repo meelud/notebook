@@ -1,23 +1,17 @@
 {
   "theory": {
     "modes": [
-      "aeolianDominant",
-      "blues",
       "diminished",
       "dorian",
-      "dorianB2",
       "doubleHarmonic",
       "enigmatic",
       "harmonicMinor",
-      "hungarianMinor",
-      "insensen",
       "locrian",
       "lydian",
       "major",
       "melodicMinor",
       "minor",
       "mixolydian",
-      "pelog",
       "pentMajor",
       "pentMinor",
       "phrygian",
@@ -61,14 +55,14 @@
       "text": "",
       "hash": 0,
       "mood": {
-        "mode": "minor",
+        "mode": "dorian",
         "normScore": 0,
         "tenseScore": 0
       },
       "analysis": {
-        "mode": "minor",
+        "mode": "dorian",
         "valence": 0,
-        "darkness": 0.619048,
+        "darkness": 0.466667,
         "tension": 0,
         "nostalgia": 0,
         "density": 0
@@ -78,14 +72,14 @@
       "text": "hello world",
       "hash": 1794106052,
       "mood": {
-        "mode": "dorian",
+        "mode": "mixolydian",
         "normScore": 0,
         "tenseScore": 0
       },
       "analysis": {
-        "mode": "dorian",
+        "mode": "mixolydian",
         "valence": 0,
-        "darkness": 0.428571,
+        "darkness": 0.2,
         "tension": 0,
         "nostalgia": 0,
         "density": 0
@@ -95,14 +89,14 @@
       "text": "I am so happy today!",
       "hash": 2965118663,
       "mood": {
-        "mode": "lydian",
+        "mode": "pentMajor",
         "normScore": 0.6833333333333335,
         "tenseScore": 0.16666666666666666
       },
       "analysis": {
-        "mode": "lydian",
+        "mode": "pentMajor",
         "valence": 0.683333,
-        "darkness": 0.095238,
+        "darkness": 0.066667,
         "tension": 0.166667,
         "nostalgia": 0,
         "density": 0.2
@@ -112,14 +106,14 @@
       "text": "I am not happy at all.",
       "hash": 4178857776,
       "mood": {
-        "mode": "mixolydian",
+        "mode": "lydian",
         "normScore": -0.3116666666666667,
         "tenseScore": 0.049999999999999996
       },
       "analysis": {
-        "mode": "mixolydian",
+        "mode": "lydian",
         "valence": -0.311667,
-        "darkness": 0.142857,
+        "darkness": 0.133333,
         "tension": 0.05,
         "nostalgia": 0,
         "density": 0.166667
@@ -129,14 +123,14 @@
       "text": "not not happy",
       "hash": 3355577926,
       "mood": {
-        "mode": "blues",
+        "mode": "lydian",
         "normScore": -0.4363333333333333,
         "tenseScore": 0.06999999999999999
       },
       "analysis": {
-        "mode": "blues",
+        "mode": "lydian",
         "valence": -0.436333,
-        "darkness": 0.190476,
+        "darkness": 0.133333,
         "tension": 0.07,
         "nostalgia": 0,
         "density": 0.333333
@@ -153,7 +147,7 @@
       "analysis": {
         "mode": "wholeTone",
         "valence": 0.326667,
-        "darkness": 0.238095,
+        "darkness": 0.266667,
         "tension": 0,
         "nostalgia": 0,
         "density": 0.2
@@ -170,7 +164,7 @@
       "analysis": {
         "mode": "minor",
         "valence": -0.466667,
-        "darkness": 0.619048,
+        "darkness": 0.6,
         "tension": 0.046667,
         "nostalgia": 0,
         "density": 0.142857
@@ -180,14 +174,14 @@
       "text": "I remember the old days, the summer of my childhood",
       "hash": 829450778,
       "mood": {
-        "mode": "dorianB2",
+        "mode": "dorian",
         "normScore": -0.19606121493043946,
         "tenseScore": -0.09803060746521973
       },
       "analysis": {
-        "mode": "dorianB2",
+        "mode": "dorian",
         "valence": -0.196061,
-        "darkness": 0.47619,
+        "darkness": 0.466667,
         "tension": 0,
         "nostalgia": 1,
         "density": 0.3
@@ -197,14 +191,14 @@
       "text": "خوشحالم",
       "hash": 4177735221,
       "mood": {
-        "mode": "aeolianDominant",
+        "mode": "melodicMinor",
         "normScore": 0.3666666666666667,
         "tenseScore": 0
       },
       "analysis": {
-        "mode": "aeolianDominant",
+        "mode": "melodicMinor",
         "valence": 0.366667,
-        "darkness": 0.333333,
+        "darkness": 0.4,
         "tension": 0,
         "nostalgia": 0,
         "density": 0
@@ -221,7 +215,7 @@
       "analysis": {
         "mode": "minor",
         "valence": -0.333333,
-        "darkness": 0.619048,
+        "darkness": 0.6,
         "tension": 0.033333,
         "nostalgia": 0,
         "density": 0.5
@@ -238,7 +232,7 @@
       "analysis": {
         "mode": "melodicMinor",
         "valence": 0.255,
-        "darkness": 0.380952,
+        "darkness": 0.4,
         "tension": 0.133333,
         "nostalgia": 0,
         "density": 0
@@ -255,7 +249,7 @@
       "analysis": {
         "mode": "mixolydian",
         "valence": 0.166667,
-        "darkness": 0.142857,
+        "darkness": 0.2,
         "tension": 0,
         "nostalgia": 1,
         "density": 0.4
@@ -265,14 +259,14 @@
       "text": "این خیلی زیبا و آرامش‌بخشه",
       "hash": 2077018722,
       "mood": {
-        "mode": "pentMajor",
+        "mode": "major",
         "normScore": 1.1786666666666668,
         "tenseScore": -0.238
       },
       "analysis": {
-        "mode": "pentMajor",
+        "mode": "major",
         "valence": 1.178667,
-        "darkness": 0.047619,
+        "darkness": 0,
         "tension": 0,
         "nostalgia": 0,
         "density": 0.2
@@ -282,14 +276,14 @@
       "text": "همه‌چیز داره از هم می‌پاشه",
       "hash": 1264455161,
       "mood": {
-        "mode": "lydian",
+        "mode": "melodicMinor",
         "normScore": 0,
         "tenseScore": 0
       },
       "analysis": {
-        "mode": "lydian",
+        "mode": "melodicMinor",
         "valence": 0,
-        "darkness": 0.095238,
+        "darkness": 0.4,
         "tension": 0,
         "nostalgia": 0,
         "density": 0
@@ -299,14 +293,14 @@
       "text": "why is this happening???",
       "hash": 1940535555,
       "mood": {
-        "mode": "enigmatic",
+        "mode": "wholeTone",
         "normScore": -0.25,
         "tenseScore": 0
       },
       "analysis": {
-        "mode": "enigmatic",
+        "mode": "wholeTone",
         "valence": -0.25,
-        "darkness": 0.285714,
+        "darkness": 0.266667,
         "tension": 0,
         "nostalgia": 0,
         "density": 0
@@ -316,14 +310,14 @@
       "text": "STOP. JUST STOP.",
       "hash": 4127439980,
       "mood": {
-        "mode": "aeolianDominant",
+        "mode": "mixolydian",
         "normScore": 0,
         "tenseScore": 0
       },
       "analysis": {
-        "mode": "aeolianDominant",
+        "mode": "mixolydian",
         "valence": 0,
-        "darkness": 0.333333,
+        "darkness": 0.2,
         "tension": 0,
         "nostalgia": 0,
         "density": 0
@@ -333,14 +327,14 @@
       "text": "😀😀😀 great vibes",
       "hash": 2695109107,
       "mood": {
-        "mode": "lydian",
+        "mode": "pentMajor",
         "normScore": 0.25666666666666665,
         "tenseScore": 0
       },
       "analysis": {
-        "mode": "lydian",
+        "mode": "pentMajor",
         "valence": 0.256667,
-        "darkness": 0.095238,
+        "darkness": 0.066667,
         "tension": 0,
         "nostalgia": 0,
         "density": 1
@@ -350,14 +344,14 @@
       "text": "کتاب روی میز است",
       "hash": 3187084160,
       "mood": {
-        "mode": "wholeTone",
+        "mode": "dorian",
         "normScore": 0,
         "tenseScore": 0
       },
       "analysis": {
-        "mode": "wholeTone",
+        "mode": "dorian",
         "valence": 0,
-        "darkness": 0.238095,
+        "darkness": 0.466667,
         "tension": 0,
         "nostalgia": 0,
         "density": 0
