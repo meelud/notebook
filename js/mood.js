@@ -1,5 +1,5 @@
 // ── Mood-derived scale ────────────────────────────────────────
-import { FA_LEXICON, FA_LEXICON_EXTRA } from './lexicon-fa.js';
+import { FA_LEXICON } from './lexicon-fa.js';
 import { EN_LEXICON_EXTRA } from './lexicon-en-extra.js';
 import { FA_LEXICON_EXTRA2 } from './lexicon-fa-extra.js';
 // Pure-data + pure-function module: no runtime audio state.
@@ -265,7 +265,7 @@ export const EMOTION_LEXICON = {
 // weight/tense and are picked up automatically by every downstream helper.
 // De-duplicated so a word already present isn't counted twice.
 (function mergePersianLexicon() {
-  const sources = [FA_LEXICON, FA_LEXICON_EXTRA, FA_LEXICON_EXTRA2, EN_LEXICON_EXTRA];
+  const sources = [FA_LEXICON, FA_LEXICON_EXTRA2, EN_LEXICON_EXTRA];
   for (const src of sources) {
     for (const category in src) {
       if (!EMOTION_LEXICON[category]) continue; // skip unknown categories defensively
