@@ -1,4 +1,4 @@
-import { buildScale, detectMood, analyzeText, hashText, buildVoicing, chordFromScale } from './mood.js';
+import { buildScale, detectMood, analyzeText, buildVoicing, hashText, ROOT_CANDIDATES_LOW, ROOT_CANDIDATES_MID, MODE_ORDER } from './mood.js';
 
 // ──────────────────────────────────────────────────────────────
 //  Audio Context & Master Bus
@@ -6,12 +6,16 @@ import { buildScale, detectMood, analyzeText, hashText, buildVoicing, chordFromS
 export let ac;
 function ensureCtx() {
   if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
-  if (ac.state === 'suspended') ac.resume();
+  // resume() returns a Promise that rejects on iOS/Safari before the first user
+  // gesture — catch it so we don't throw an unhandled rejection. unlockAudio()
+  // in main.js retries on the next interaction.
+  if (ac.state === 'suspended') {
+    try { ac.resume().catch(() => {}); } catch (e) {}
+  }
   return ac;
 }
 
 // ── Master Bus: Compressor → Destination ──
-// Task 4: gentle transparent compressor to tame peaks without squashing dynamics
 let masterComp, masterGain;
 function getMasterBus() {
   if (masterComp) return masterGain;
@@ -36,10 +40,252 @@ let _rng;
 export function seedRng(seed) {
   let s = seed >>> 0;
   _rng = () => { s |= 0; s = s + 0x6D2B79F5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s); t ^= t + Math.imul(t ^ t >>> 7, 61 | t); return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  // Bug A fix: reset the stepwise-melody cursor on every (re)seed so the same
+  // text always starts the melody from the same point, independent of what was
+  // played before. Restores the "same text = same song" guarantee. Timbres,
+  // voice selection and mix are untouched — only note ORDER becomes deterministic.
+  lastNoteIndex = 3;
 }
 function rnd(a = 0, b = 1) { return _rng() * (b - a) + a; }
 function pick(arr) { return arr[Math.floor(_rng() * arr.length)]; }
 function chance(p) { return _rng() < p; }
+
+// ═══════════════════════════════════════════════════════════════
+//  Noise Buffer Cache — Production-Grade LRU with Memory Pressure
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * @typedef {Object} CacheEntry
+ * @property {AudioBuffer} buffer — the cached audio buffer
+ * @property {number} byteSize — approximate memory footprint in bytes
+ * @property {number} lastAccess — timestamp from performance.now()
+ * @property {number} hitCount — cache hit counter for analytics
+ */
+
+/** @type {Map<string, CacheEntry>} */
+const noiseCache = new Map();
+
+/** @type {number} — max entries before LRU eviction */
+const MAX_CACHE_ENTRIES = 50;
+
+/**
+ * @type {number} — max approximate bytes before aggressive cleanup.
+ * Adaptive: 64MB for mobile, 128MB for desktop (detected by screen width heuristic).
+ */
+const MAX_CACHE_BYTES = (typeof window !== 'undefined' && window.innerWidth < 768)
+  ? 64 * 1024 * 1024   // Mobile: conservative
+  : 128 * 1024 * 1024; // Desktop: generous
+
+/** @type {number} — current approximate byte size of all cached buffers */
+let currentCacheBytes = 0;
+
+/** @type {boolean} — enable verbose logging in development only */
+const DEBUG_CACHE = (() => {
+  try {
+    return typeof location !== 'undefined' &&
+           (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
+  } catch (e) {
+    return false;
+  }
+})();
+
+/**
+ * Calculate approximate byte size of an AudioBuffer.
+ * Float32 = 4 bytes per sample × channels × length.
+ * @param {AudioBuffer} buf
+ * @returns {number}
+ */
+function estimateBufferBytes(buf) {
+  return buf.length * buf.numberOfChannels * 4;
+}
+
+/**
+ * Evict the oldest entry (LRU) and update byte tracking.
+ * @returns {boolean} — true if an entry was evicted
+ */
+function evictLRU() {
+  if (noiseCache.size === 0) return false;
+
+  const oldestKey = noiseCache.keys().next().value;
+  const entry = noiseCache.get(oldestKey);
+
+  noiseCache.delete(oldestKey);
+  currentCacheBytes -= entry.byteSize;
+
+  if (DEBUG_CACHE) {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[🔴 Cache Evict] key: "${oldestKey}", ` +
+      `freed: ${(entry.byteSize / 1024).toFixed(1)}KB, ` +
+      `remaining: ${noiseCache.size} entries`
+    );
+  }
+
+  return true;
+}
+
+/**
+ * Aggressive cleanup: remove entries until we're under the byte limit.
+ * Removes 25% of entries (oldest first) in one batch for efficiency.
+ */
+function evictUnderPressure() {
+  const targetCount = Math.floor(noiseCache.size * 0.75); // keep 75%
+  let evicted = 0;
+
+  while (noiseCache.size > targetCount && noiseCache.size > 0) {
+    if (evictLRU()) evicted++;
+  }
+
+  if (DEBUG_CACHE && evicted > 0) {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[⚠️ Memory Pressure] Evicted ${evicted} entries, ` +
+      `${noiseCache.size} remaining, ` +
+      `${(currentCacheBytes / 1024 / 1024).toFixed(2)}MB used`
+    );
+  }
+}
+
+/**
+ * Memory pressure monitoring (Chrome-only, guarded).
+ * Checks heap usage every 10 seconds and triggers cleanup if >80%.
+ */
+(function setupMemoryPressure() {
+  if (typeof performance === 'undefined' || !performance.memory) return;
+
+  const CHECK_INTERVAL = 10000;
+
+  setInterval(() => {
+    try {
+      const used = performance.memory.usedJSHeapSize;
+      const total = performance.memory.totalJSHeapSize;
+      const ratio = used / total;
+
+      // If heap usage > 80%, trigger cache cleanup
+      if (ratio > 0.8 && noiseCache.size > 10) {
+        if (DEBUG_CACHE) {
+          // eslint-disable-next-line no-console
+          console.log(`[🚨 Heap Pressure] ${(ratio * 100).toFixed(1)}% used`);
+        }
+        evictUnderPressure();
+      }
+    } catch (e) {
+      // Silently fail if memory API becomes unavailable
+    }
+  }, CHECK_INTERVAL);
+})();
+
+/**
+ * Get or create a noise buffer. LRU eviction prevents unbounded growth.
+ *
+ * @param {string} key — noise type (e.g. 'breath', 'wind')
+ * @param {number} dur — duration in seconds
+ * @param {function(Float32Array, number): void} generatorFn — fills the buffer
+ * @returns {AudioBuffer}
+ */
+function getOrCreateNoiseBuffer(key, dur, generatorFn) {
+  const ctx = ensureCtx();
+
+  // Round duration to 0.1s to avoid near-duplicate keys
+  const roundedDur = Math.round(dur * 10) / 10;
+  const cacheKey = `${key}_${roundedDur}_${ctx.sampleRate}`;
+
+  // ── Cache Hit: promote to MRU position ──
+  const existing = noiseCache.get(cacheKey);
+  if (existing) {
+    // Move to end (most-recently-used) by re-inserting
+    noiseCache.delete(cacheKey);
+    existing.lastAccess = performance.now();
+    existing.hitCount++;
+    noiseCache.set(cacheKey, existing);
+
+    if (DEBUG_CACHE && existing.hitCount === 1) {
+      // eslint-disable-next-line no-console
+      console.log(`[🟢 Cache Hit] ${cacheKey} (hits: ${existing.hitCount})`);
+    }
+
+    return existing.buffer;
+  }
+
+  // ── Cache Miss: generate new buffer ──
+  // Using Math.ceil to ensure integer sample count (Web Audio API requirement)
+  const bufLen = Math.ceil(ctx.sampleRate * dur);
+  const buf = ctx.createBuffer(1, bufLen, ctx.sampleRate);
+  generatorFn(buf.getChannelData(0), bufLen);
+
+  const byteSize = estimateBufferBytes(buf);
+
+  // ── Evict if at capacity (bytes or entries) ──
+  while (
+    (noiseCache.size >= MAX_CACHE_ENTRIES ||
+     currentCacheBytes + byteSize > MAX_CACHE_BYTES) &&
+    noiseCache.size > 0
+  ) {
+    evictLRU();
+  }
+
+  // ── Insert new entry ──
+  /** @type {CacheEntry} */
+  const entry = {
+    buffer: buf,
+    byteSize,
+    lastAccess: performance.now(),
+    hitCount: 0,
+  };
+
+  noiseCache.set(cacheKey, entry);
+  currentCacheBytes += byteSize;
+
+  if (DEBUG_CACHE) {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[🔵 Cache Miss] ${cacheKey}, ` +
+      `size: ${(byteSize / 1024).toFixed(1)}KB, ` +
+      `entries: ${noiseCache.size}, ` +
+      `total: ${(currentCacheBytes / 1024 / 1024).toFixed(2)}MB`
+    );
+  }
+
+  return buf;
+}
+
+/**
+ * Manually clear the entire cache. Useful for:
+ * - Long-running sessions (hours)
+ * - Memory debugging
+ * - Before recording (clean state)
+ * - After playback stops
+ */
+export function clearNoiseCache() {
+  const count = noiseCache.size;
+  const bytes = currentCacheBytes;
+
+  noiseCache.clear();
+  currentCacheBytes = 0;
+
+  if (DEBUG_CACHE && count > 0) {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[🗑️ Cache Clear] ${count} entries, ` +
+      `${(bytes / 1024 / 1024).toFixed(2)}MB freed`
+    );
+  }
+}
+
+/**
+ * Get cache statistics for debugging/monitoring.
+ * @returns {{entries: number, bytes: number, bytesFormatted: string, maxEntries: number, maxBytes: number, maxBytesFormatted: string}}
+ */
+export function getNoiseCacheStats() {
+  return {
+    entries: noiseCache.size,
+    bytes: currentCacheBytes,
+    bytesFormatted: `${(currentCacheBytes / 1024 / 1024).toFixed(2)}MB`,
+    maxEntries: MAX_CACHE_ENTRIES,
+    maxBytes: MAX_CACHE_BYTES,
+    maxBytesFormatted: `${(MAX_CACHE_BYTES / 1024 / 1024).toFixed(0)}MB`,
+  };
+}
 
 // ──────────────────────────────────────────────────────────────
 //  Reverb — Task 3: dark warm reverb (LP-filtered noise buffer)
@@ -55,7 +301,7 @@ function buildReverb() {
     let prev = 0;
     const lpCoeff = 0.72; // strong LP filtering — removes all harshness from tail
     for (let i = 0; i < frames; i++) {
-      const noise = Math.random() * 2 - 1;
+      const noise = _rng() * 2 - 1;
       // one-pole LP filter applied directly during buffer generation
       prev = prev * lpCoeff + noise * (1 - lpCoeff);
       // exponential decay envelope
@@ -82,8 +328,8 @@ function buildReverb() {
 const MAX_POLY = 4; // max simultaneous word-triggered notes
 const activeVoices = []; // { gainNode, startTime, release() }
 
-function registerVoice(gainNode, releaseTime) {
-  const entry = { gainNode, startTime: ac.currentTime, releaseTime };
+function registerVoice(gainNode, releaseTime, extraNodes = []) {
+  const entry = { gainNode, startTime: ac.currentTime, releaseTime, extraNodes };
   activeVoices.push(entry);
   // if over polyphony limit, fade out oldest voice
   while (activeVoices.length > MAX_POLY) {
@@ -93,6 +339,13 @@ function registerVoice(gainNode, releaseTime) {
       oldest.gainNode.gain.cancelScheduledValues(now);
       oldest.gainNode.gain.setValueAtTime(oldest.gainNode.gain.value, now);
       oldest.gainNode.gain.exponentialRampToValueAtTime(0.0001, now + 0.15);
+      // Disconnect connections gently after fade out complete
+      setTimeout(() => {
+        try { oldest.gainNode.disconnect(); } catch (e) {}
+        if (oldest.extraNodes) {
+          oldest.extraNodes.forEach(node => { try { node.disconnect(); } catch(e){} });
+        }
+      }, 200);
     } catch(e) {}
   }
 }
@@ -132,7 +385,6 @@ function stepwiseNoteIndex(scaleLen) {
 // ──────────────────────────────────────────────────────────────
 //  Silence / Breath — Task 8: Musical rests
 // ──────────────────────────────────────────────────────────────
-// Returns a silence duration in seconds (0 = no silence). Called before each word.
 export function getSilenceDuration(punctBefore, wordIndex, totalWords) {
   // After paragraph break / double newline: long breath
   if (punctBefore && /(\n\s*\n|\.{3,})/.test(punctBefore)) return rnd(1.2, 2.0);
@@ -146,39 +398,35 @@ export function getSilenceDuration(punctBefore, wordIndex, totalWords) {
 }
 
 // ──────────────────────────────────────────────────────────────
-//  22 Voices (UNTOUCHED synthesis logic — only routing changed)
+//  22 Voices (Optimized Synthesis Core under Golden Rule)
 // ──────────────────────────────────────────────────────────────
 export const VOICES = {
   pad(f, dur, vol, dest, wordLen) {
     const c = ac;
     const osc = c.createOscillator(), g = c.createGain();
-    // Task 6: reduced detune for melodic voices (centered, less phasing)
     osc.detune.value = rnd(-4, 4);
     osc.type = 'sine';
     osc.frequency.value = f;
-    // Task 5: humanize — longer words get softer attack
     const attackTime = 0.05 + Math.min(wordLen || 4, 10) * 0.012;
     const peakVol = vol * rnd(0.85, 1.0);
     g.gain.setValueAtTime(0, c.currentTime);
     g.gain.linearRampToValueAtTime(peakVol, c.currentTime + attackTime);
     g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur);
-    // Task 3: gentle highpass to keep low-end clean (non-bass voices)
     const hp = c.createBiquadFilter();
     hp.type = 'highpass';
     hp.frequency.value = f > 300 ? 90 : 30; // only filter non-bass notes
     osc.connect(hp); hp.connect(g);
     g.connect(reverbNode); g.connect(dest);
     osc.start(); osc.stop(c.currentTime + dur + 0.1);
-    // Task 7: explicit cleanup
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur);
+    registerVoice(g, c.currentTime + dur, [osc, hp]);
     return dur;
   },
 
   pluck(f, dur, vol, dest, wordLen) {
     const c = ac;
     const osc = c.createOscillator(), g = c.createGain();
-    osc.detune.value = rnd(-3, 3); // Task 6: tighter detune
+    osc.detune.value = rnd(-3, 3);
     osc.type = 'triangle';
     osc.frequency.value = f;
     const peakVol = vol * rnd(0.8, 1.0);
@@ -190,20 +438,19 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     osc.start(); osc.stop(c.currentTime + dur + 0.05);
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur);
+    registerVoice(g, c.currentTime + dur, [osc, hp]);
     return dur * 0.7;
   },
 
   breath(f, dur, vol, dest, wordLen) {
     const c = ac;
-    const bufLen = c.sampleRate * dur;
-    const buf = c.createBuffer(1, bufLen, c.sampleRate);
-    const data = buf.getChannelData(0);
-    let prev = 0;
-    for (let i = 0; i < bufLen; i++) {
-      prev = prev * 0.85 + (Math.random() * 2 - 1) * 0.15;
-      data[i] = prev * (1 - i / bufLen);
-    }
+    const buf = getOrCreateNoiseBuffer('breath', dur, (data, bufLen) => {
+      let prev = 0;
+      for (let i = 0; i < bufLen; i++) {
+        prev = prev * 0.85 + (_rng() * 2 - 1) * 0.15;
+        data[i] = prev * (1 - i / bufLen);
+      }
+    });
     const src = c.createBufferSource(), g = c.createGain();
     const bp = c.createBiquadFilter();
     bp.type = 'bandpass'; bp.frequency.value = f * 1.5; bp.Q.value = 1.5;
@@ -215,6 +462,7 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     src.start(); src.stop(c.currentTime + dur + 0.05);
     src.onended = () => { try { src.disconnect(); g.disconnect(); bp.disconnect(); } catch(e){} };
+    registerVoice(g, c.currentTime + dur, [src, bp]);
     return dur;
   },
 
@@ -223,7 +471,7 @@ export const VOICES = {
     const osc = c.createOscillator(), g = c.createGain();
     osc.type = 'sine';
     osc.frequency.value = f * 2;
-    osc.detune.value = rnd(-5, 5); // Task 6
+    osc.detune.value = rnd(-5, 5);
     const peakVol = vol * 0.5 * rnd(0.85, 1.0);
     g.gain.setValueAtTime(peakVol, c.currentTime);
     g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur * 1.5);
@@ -233,7 +481,7 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     osc.start(); osc.stop(c.currentTime + dur * 1.5 + 0.1);
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur * 1.5);
+    registerVoice(g, c.currentTime + dur * 1.5, [osc, hp]);
     return dur * 1.5;
   },
 
@@ -242,7 +490,7 @@ export const VOICES = {
     const osc1 = c.createOscillator(), osc2 = c.createOscillator(), g = c.createGain();
     osc1.type = 'triangle'; osc1.frequency.value = f;
     osc2.type = 'sine'; osc2.frequency.value = f * 2.01;
-    osc2.detune.value = rnd(-2, 2); // Task 6
+    osc2.detune.value = rnd(-2, 2);
     const peakVol = vol * 0.6 * rnd(0.85, 1.0);
     g.gain.setValueAtTime(peakVol, c.currentTime);
     g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur);
@@ -253,7 +501,7 @@ export const VOICES = {
     osc1.start(); osc2.start();
     osc1.stop(c.currentTime + dur + 0.05); osc2.stop(c.currentTime + dur + 0.05);
     osc1.onended = () => { try { osc1.disconnect(); osc2.disconnect(); g.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur);
+    registerVoice(g, c.currentTime + dur, [osc1, osc2, hp]);
     return dur;
   },
 
@@ -270,7 +518,7 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     osc.start(); osc.stop(c.currentTime + dur * 0.5 + 0.05);
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur * 0.5);
+    registerVoice(g, c.currentTime + dur * 0.5, [osc, hp]);
     return dur * 0.5;
   },
 
@@ -278,12 +526,11 @@ export const VOICES = {
     const c = ac;
     const oscs = [];
     const g = c.createGain();
-    // 3 detuned voices for choir, Task 6: very tight detune
     for (let i = 0; i < 3; i++) {
       const osc = c.createOscillator();
       osc.type = 'sine';
       osc.frequency.value = f;
-      osc.detune.value = (i - 1) * rnd(3, 6); // tight spread
+      osc.detune.value = (i - 1) * rnd(3, 6);
       osc.connect(g);
       oscs.push(osc);
     }
@@ -297,7 +544,7 @@ export const VOICES = {
     g.connect(hp); hp.connect(reverbNode); hp.connect(dest);
     oscs.forEach(o => { o.start(); o.stop(c.currentTime + dur + 0.1); });
     oscs[0].onended = () => { try { oscs.forEach(o => o.disconnect()); g.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur);
+    registerVoice(g, c.currentTime + dur, [...oscs, hp]);
     return dur;
   },
 
@@ -318,7 +565,7 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     osc.start(); osc.stop(c.currentTime + dur + 0.1);
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); lp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur);
+    registerVoice(g, c.currentTime + dur, [osc, lp]);
     return dur;
   },
 
@@ -336,7 +583,7 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     osc.start(); osc.stop(c.currentTime + dur * 0.6 + 0.05);
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur * 0.6);
+    registerVoice(g, c.currentTime + dur * 0.6, [osc, hp]);
     return dur * 0.6;
   },
 
@@ -353,6 +600,7 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     osc.start(); osc.stop(c.currentTime + longDur + 0.1);
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); } catch(e){} };
+    registerVoice(g, c.currentTime + longDur, [osc]);
     return longDur;
   },
 
@@ -370,7 +618,7 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     osc.start(); osc.stop(c.currentTime + dur * 1.2 + 0.05);
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur * 1.2);
+    registerVoice(g, c.currentTime + dur * 1.2, [osc, hp]);
     return dur * 1.2;
   },
 
@@ -389,7 +637,7 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     osc.start(); osc.stop(c.currentTime + dur * 0.8 + 0.05);
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur * 0.8);
+    registerVoice(g, c.currentTime + dur * 0.8, [osc, hp]);
     return dur * 0.8;
   },
 
@@ -409,7 +657,7 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     osc.start(); osc.stop(c.currentTime + dur + 0.1);
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur);
+    registerVoice(g, c.currentTime + dur, [osc, hp]);
     return dur;
   },
 
@@ -431,7 +679,7 @@ export const VOICES = {
     osc1.start(); osc2.start();
     osc1.stop(c.currentTime + dur + 0.05); osc2.stop(c.currentTime + dur + 0.05);
     osc1.onended = () => { try { osc1.disconnect(); osc2.disconnect(); g.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur);
+    registerVoice(g, c.currentTime + dur, [osc1, osc2, hp]);
     return dur;
   },
 
@@ -449,7 +697,7 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     osc.start(); osc.stop(c.currentTime + dur * 0.4 + 0.05);
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur * 0.4);
+    registerVoice(g, c.currentTime + dur * 0.4, [osc, hp]);
     return dur * 0.4;
   },
 
@@ -477,18 +725,17 @@ export const VOICES = {
     g.connect(lp); lp.connect(hp); hp.connect(reverbNode); hp.connect(dest);
     oscs.forEach(o => { o.start(); o.stop(c.currentTime + dur + 0.1); });
     oscs[0].onended = () => { try { oscs.forEach(o => o.disconnect()); g.disconnect(); lp.disconnect(); hp.disconnect(); } catch(e){} };
-    registerVoice(g, c.currentTime + dur);
+    registerVoice(g, c.currentTime + dur, [...oscs, lp, hp]);
     return dur;
   },
 
   whisper(f, dur, vol, dest, wordLen) {
     const c = ac;
-    const bufLen = c.sampleRate * dur;
-    const buf = c.createBuffer(1, bufLen, c.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < bufLen; i++) {
-      data[i] = (Math.random() * 2 - 1) * (1 - i / bufLen) * 0.5;
-    }
+    const buf = getOrCreateNoiseBuffer('whisper', dur, (data, bufLen) => {
+      for (let i = 0; i < bufLen; i++) {
+        data[i] = (_rng() * 2 - 1) * (1 - i / bufLen) * 0.5;
+      }
+    });
     const src = c.createBufferSource(), g = c.createGain();
     const bp = c.createBiquadFilter();
     bp.type = 'bandpass'; bp.frequency.value = f * 2; bp.Q.value = 2;
@@ -500,19 +747,19 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     src.start(); src.stop(c.currentTime + dur + 0.05);
     src.onended = () => { try { src.disconnect(); g.disconnect(); bp.disconnect(); } catch(e){} };
+    registerVoice(g, c.currentTime + dur, [src, bp]);
     return dur;
   },
 
   wind(f, dur, vol, dest, wordLen) {
     const c = ac;
-    const bufLen = c.sampleRate * dur * 1.5;
-    const buf = c.createBuffer(1, bufLen, c.sampleRate);
-    const data = buf.getChannelData(0);
-    let prev = 0;
-    for (let i = 0; i < bufLen; i++) {
-      prev = prev * 0.92 + (Math.random() * 2 - 1) * 0.08;
-      data[i] = prev;
-    }
+    const buf = getOrCreateNoiseBuffer('wind', dur * 1.5, (data, bufLen) => {
+      let prev = 0;
+      for (let i = 0; i < bufLen; i++) {
+        prev = prev * 0.92 + (_rng() * 2 - 1) * 0.08;
+        data[i] = prev;
+      }
+    });
     const src = c.createBufferSource(), g = c.createGain();
     const lp = c.createBiquadFilter();
     lp.type = 'lowpass'; lp.frequency.value = 600;
@@ -525,18 +772,17 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     src.start(); src.stop(c.currentTime + dur * 1.5 + 0.05);
     src.onended = () => { try { src.disconnect(); g.disconnect(); lp.disconnect(); } catch(e){} };
+    registerVoice(g, c.currentTime + dur * 1.5, [src, lp]);
     return dur * 1.5;
   },
 
   rain(f, dur, vol, dest, wordLen) {
     const c = ac;
-    const bufLen = c.sampleRate * dur;
-    const buf = c.createBuffer(1, bufLen, c.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < bufLen; i++) {
-      // sparse crackles — random impulses
-      data[i] = chance(0.02) ? rnd(-0.5, 0.5) : 0;
-    }
+    const buf = getOrCreateNoiseBuffer('rain', dur, (data, bufLen) => {
+      for (let i = 0; i < bufLen; i++) {
+        data[i] = chance(0.02) ? rnd(-0.5, 0.5) : 0;
+      }
+    });
     const src = c.createBufferSource(), g = c.createGain();
     const lp = c.createBiquadFilter();
     lp.type = 'lowpass'; lp.frequency.value = 3000;
@@ -548,17 +794,17 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     src.start(); src.stop(c.currentTime + dur + 0.05);
     src.onended = () => { try { src.disconnect(); g.disconnect(); lp.disconnect(); } catch(e){} };
+    registerVoice(g, c.currentTime + dur, [src, lp]);
     return dur;
   },
 
   vinyl(f, dur, vol, dest, wordLen) {
     const c = ac;
-    const bufLen = c.sampleRate * dur;
-    const buf = c.createBuffer(1, bufLen, c.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < bufLen; i++) {
-      data[i] = (Math.random() * 2 - 1) * 0.03 + (chance(0.005) ? rnd(-0.3, 0.3) : 0);
-    }
+    const buf = getOrCreateNoiseBuffer('vinyl', dur, (data, bufLen) => {
+      for (let i = 0; i < bufLen; i++) {
+        data[i] = (_rng() * 2 - 1) * 0.03 + (chance(0.005) ? rnd(-0.3, 0.3) : 0);
+      }
+    });
     const src = c.createBufferSource(), g = c.createGain();
     const lp = c.createBiquadFilter();
     lp.type = 'lowpass'; lp.frequency.value = 2000;
@@ -572,19 +818,19 @@ export const VOICES = {
     g.connect(dest);
     src.start(); src.stop(c.currentTime + dur + 0.05);
     src.onended = () => { try { src.disconnect(); g.disconnect(); lp.disconnect(); hp.disconnect(); } catch(e){} };
+    registerVoice(g, c.currentTime + dur, [src, lp, hp]);
     return dur;
   },
 
   tape(f, dur, vol, dest, wordLen) {
     const c = ac;
-    const bufLen = c.sampleRate * dur;
-    const buf = c.createBuffer(1, bufLen, c.sampleRate);
-    const data = buf.getChannelData(0);
-    let prev = 0;
-    for (let i = 0; i < bufLen; i++) {
-      prev = prev * 0.95 + (Math.random() * 2 - 1) * 0.05;
-      data[i] = prev * 0.4;
-    }
+    const buf = getOrCreateNoiseBuffer('tape', dur, (data, bufLen) => {
+      let prev = 0;
+      for (let i = 0; i < bufLen; i++) {
+        prev = prev * 0.95 + (_rng() * 2 - 1) * 0.05;
+        data[i] = prev * 0.4;
+      }
+    });
     const src = c.createBufferSource(), g = c.createGain();
     const lp = c.createBiquadFilter();
     lp.type = 'lowpass'; lp.frequency.value = 1500;
@@ -596,6 +842,7 @@ export const VOICES = {
     g.connect(dest);
     src.start(); src.stop(c.currentTime + dur + 0.05);
     src.onended = () => { try { src.disconnect(); g.disconnect(); lp.disconnect(); } catch(e){} };
+    registerVoice(g, c.currentTime + dur, [src, lp]);
     return dur;
   },
 
@@ -614,6 +861,7 @@ export const VOICES = {
     g.connect(reverbNode); g.connect(dest);
     osc.start(); osc.stop(c.currentTime + dur * 2 + 0.1);
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); lp.disconnect(); } catch(e){} };
+    registerVoice(g, c.currentTime + dur * 2, [osc, lp]);
     return dur * 2;
   },
 };
@@ -630,49 +878,53 @@ const VOICE_GROUPS = {
 // ──────────────────────────────────────────────────────────────
 let currentScale = [];
 let currentMode = 'minor';
-let ambientDensity = 0;
+let ambientDensity   = 0;
+let currentDarkness  = 0.5; // 0=bright .. 1=dark — from analyzeText
+let currentTension   = 0.0; // 0=calm  .. 1=tense
+let currentNostalgia = 0.0; // 0=none  .. 1=strong
 
 export function playWord(word, sentenceType, progress, punctBefore, wordLen) {
   const c = ensureCtx();
   if (!reverbNode) buildReverb();
   cleanupVoices();
 
-  // Stereo panning: gentle, seeded per-note position so the mix breathes in space.
-  // Pro approach — the DRY (direct) signal is panned; the reverb tail stays centered
-  // (shared room), so we route the voice into a panner → master, while the voice's
-  // own reverb send (inside each voice fn) still goes to the centered reverbNode.
   const panner = c.createStereoPanner ? c.createStereoPanner() : null;
   let dest;
   if (panner) {
-    // Subtle, musical spread: mostly near-center, occasionally wider — never hard-panned.
     panner.pan.value = Math.max(-0.85, Math.min(0.85, rnd(-0.55, 0.55)));
     panner.connect(getMasterBus());
     dest = panner;
-    // GC: disconnect the panner after the note's tail (generous 8s cap)
     setTimeout(() => { try { panner.disconnect(); } catch (e) {} }, 8000);
   } else {
     dest = getMasterBus();
   }
 
-  // NOTE: silence/breath is handled entirely by the caller (main.js) BEFORE
-  // calling playWord. We must NOT re-check it here, otherwise a word that
-  // follows any punctuation (comma, etc.) would get swallowed / muted.
-  // playWord always plays its note.
-
-  // Select voice from group
-  const group = VOICE_GROUPS[sentenceType] || VOICE_GROUPS.statement;
+  // Voice group: sentence type is primary. Analysis values add a secondary bias only —
+  // they shift probabilities, never hard-override the sentence type choice.
+  let group = VOICE_GROUPS[sentenceType] || VOICE_GROUPS.statement;
+  if (currentTension > 0.6 && sentenceType === 'statement') {
+    // tense statements lean toward edgier exclamation voices
+    if (_rng() < 0.45) group = VOICE_GROUPS.exclamation;
+  } else if (currentDarkness > 0.65 && sentenceType === 'question') {
+    // dark questions lean away from bright bell/glass/harp voices
+    if (_rng() < 0.4) group = VOICE_GROUPS.statement;
+  }
   const voiceName = pick(group);
   const voiceFn = VOICES[voiceName];
   if (!voiceFn) return { played: false, silenceDur: 0 };
 
-  // Task 1: stepwise note selection
   const noteIdx = stepwiseNoteIndex(currentScale.length || 7);
   const baseFreq = currentScale[noteIdx] || 220;
-  // Keep in a comfortable octave range (no extreme jumps)
-  const octaveShift = chance(0.15) ? (chance(0.5) ? 2 : 0.5) : 1;
+  // Octave bias: darkness + nostalgia pull register down, brightness pulls up.
+  // Purely probabilistic — never a hard override.
+  const darkBias  = Math.max(0, currentDarkness  - 0.4) * 0.35;
+  const nostBias  = currentNostalgia * 0.12;
+  const lowProb   = 0.08 + darkBias + nostBias;
+  const highProb  = Math.max(0, 0.15 - darkBias * 0.8);
+  const roll = _rng();
+  const octaveShift = roll < lowProb ? 0.5 : roll < lowProb + highProb ? 2 : 1;
   const freq = baseFreq * octaveShift;
 
-  // Task 5: humanized velocity — word length affects volume and duration
   const wl = wordLen || word.length || 4;
   const baseVol = 0.12 + progress * 0.06;
   const vol = baseVol * rnd(0.75, 1.0) * (1 - Math.min(wl, 12) * 0.015);
@@ -689,8 +941,19 @@ export function setMood(text) {
   const mood = detectMood(text);
   const analysis = analyzeText(text);
   currentMode = mood.mode;
-  currentScale = buildScale(220, currentMode);
-  ambientDensity = analysis.density || 0;
+  // Pick root from text hash so same text = same root (deterministic).
+  // Darkness selects the register: dark text uses the low octave candidates,
+  // bright/neutral text uses the mid register. This is the missing link between
+  // emotional content and the actual pitch of the piece.
+  const h = hashText(text);
+  const dark = analysis.darkness ?? 0.5;
+  const candidates = dark > 0.55 ? ROOT_CANDIDATES_LOW : ROOT_CANDIDATES_MID;
+  const rootHz = candidates[h % candidates.length];
+  currentScale = buildScale(rootHz, currentMode);
+  ambientDensity   = analysis.density   ?? 0;
+  currentDarkness  = analysis.darkness  ?? 0.5;
+  currentTension   = analysis.tension   ?? 0.0;
+  currentNostalgia = analysis.nostalgia ?? 0.0;
   return { mood, analysis };
 }
 
@@ -705,8 +968,8 @@ const BAR_BEATS = 4;
 function beatDur() { return BEAT_SEC; }
 function barDur() { return BEAT_SEC * BAR_BEATS; }
 function moodDarkness() {
-  const idx = ['lydian', 'major', 'mixolydian', 'dorian', 'melodicMinor', 'minor', 'phrygian', 'locrian', 'diminished', 'phrygianDominant', 'doubleHarmonic', 'enigmatic', 'harmonicMinor', 'pentMajor', 'pentMinor', 'wholeTone'].indexOf(currentMode);
-  return idx < 0 ? 0.5 : idx / 15;
+  const idx = MODE_ORDER.indexOf(currentMode);
+  return idx < 0 ? 0.5 : idx / (MODE_ORDER.length - 1);
 }
 
 let ambientRunning = false;
@@ -728,7 +991,9 @@ export function startAmbient(dests) {
     osc.type = 'sawtooth'; osc.frequency.value = f;
     osc.detune.value = rnd(-6, 6);
     const dur = barDur() * rnd(2, 4);
-    const peak = rnd(0.02, 0.04) * (0.5 + ambientDensity * 0.5);
+    // Dynamic volume matching: reduce the heavy deep drone volume in bright moods
+    // so the mix becomes clean, airy, and joyful, while retaining deep weight in dark moods.
+    const peak = rnd(0.02, 0.04) * (0.5 + ambientDensity * 0.5) * (0.2 + moodDarkness() * 0.8);
     g.gain.setValueAtTime(0, c.currentTime);
     g.gain.linearRampToValueAtTime(peak, c.currentTime + dur * 0.3);
     g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur);
@@ -743,17 +1008,17 @@ export function startAmbient(dests) {
   function playCrackle() {
     if (!ambientRunning) return;
     const dur = barDur() * rnd(1.5, 3);
-    const bufLen = c.sampleRate * dur;
-    const buf = c.createBuffer(1, bufLen, c.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < bufLen; i++) {
-      data[i] = chance(0.003) ? rnd(-0.15, 0.15) : (Math.random() * 2 - 1) * 0.008;
-    }
+    const buf = getOrCreateNoiseBuffer('vinyl_crackle', dur, (data, bufLen) => {
+      for (let i = 0; i < bufLen; i++) {
+        data[i] = chance(0.003) ? rnd(-0.15, 0.15) : (_rng() * 2 - 1) * 0.008;
+      }
+    });
     const src = c.createBufferSource(), g = c.createGain();
     const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2500;
     const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 300;
     src.buffer = buf;
-    const peak = rnd(0.015, 0.03) * (0.3 + ambientDensity * 0.4);
+    // Quiet down vinyl crackle when the music is bright so it feels less koder/dirty
+    const peak = rnd(0.015, 0.03) * (0.3 + ambientDensity * 0.4) * (0.3 + moodDarkness() * 0.7);
     g.gain.setValueAtTime(peak, c.currentTime);
     g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur);
     src.connect(lp); lp.connect(hp); hp.connect(g);
@@ -767,18 +1032,18 @@ export function startAmbient(dests) {
   function playHiss() {
     if (!ambientRunning) return;
     const dur = barDur() * rnd(2, 4);
-    const bufLen = c.sampleRate * dur;
-    const buf = c.createBuffer(1, bufLen, c.sampleRate);
-    const data = buf.getChannelData(0);
-    let prev = 0;
-    for (let i = 0; i < bufLen; i++) {
-      prev = prev * 0.93 + (Math.random() * 2 - 1) * 0.07;
-      data[i] = prev;
-    }
+    const buf = getOrCreateNoiseBuffer('tape_hiss', dur, (data, bufLen) => {
+      let prev = 0;
+      for (let i = 0; i < bufLen; i++) {
+        prev = prev * 0.93 + (_rng() * 2 - 1) * 0.07;
+        data[i] = prev;
+      }
+    });
     const src = c.createBufferSource(), g = c.createGain();
     const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1800;
     src.buffer = buf;
-    const peak = rnd(0.008, 0.018) * (0.4 + ambientDensity * 0.3);
+    // Lower tape hiss in bright moods
+    const peak = rnd(0.008, 0.018) * (0.4 + ambientDensity * 0.3) * (0.3 + moodDarkness() * 0.7);
     g.gain.setValueAtTime(0, c.currentTime);
     g.gain.linearRampToValueAtTime(peak, c.currentTime + dur * 0.2);
     g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur);
@@ -792,24 +1057,20 @@ export function startAmbient(dests) {
   // ---- warm motif note (Toby Fox-ish singing line) ----
   function playMotifNote() {
     if (!ambientRunning) return;
-    const f = pick(currentScale) * 2; // one octave up — warm, singing register
+    const f = pick(currentScale) * 2;
     const osc = c.createOscillator(), g = c.createGain();
-    // slightly softer filter so the note has no sharp edge — rounder, gentler tone
     const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1500 - moodDarkness() * 400;
     osc.type = 'sine'; osc.frequency.value = f;
-    const dur = beatDur() * rnd(2.2, 3.2); // longer, more sustained — notes linger & sing
-    const peak = rnd(0.035, 0.06) * ambientDensity; // soft & gentle, like the original
+    const dur = beatDur() * rnd(2.2, 3.2);
+    const peak = rnd(0.035, 0.06) * ambientDensity;
     g.gain.setValueAtTime(0, c.currentTime);
-    // gentle, slow swell instead of a quick onset — removes the "sharp/early" bite
     g.gain.linearRampToValueAtTime(peak, c.currentTime + 0.30);
-    // hold near-peak a moment, then a long, slow tail so it fades softly (not cut short)
     g.gain.setValueAtTime(peak, c.currentTime + dur * 0.55);
     g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur + 0.8);
     osc.connect(lp); lp.connect(g);
     g.connect(reverbNode); dests.forEach(d => g.connect(d));
     osc.start(); osc.stop(c.currentTime + dur + 1.0);
     osc.onended = () => { try { osc.disconnect(); g.disconnect(); lp.disconnect(); } catch(e){} };
-    // Task 8: sometimes skip motif note for breathing space
     const nextDelay = chance(0.2) ? beatDur() * rnd(4, 6) : beatDur() * rnd(2, 3.5);
     ambientTimers.push(setTimeout(playMotifNote, nextDelay * 1000));
   }
@@ -818,14 +1079,13 @@ export function startAmbient(dests) {
   function playTapeWarmth() {
     if (!ambientRunning) return;
     const dur = barDur() * rnd(3, 5);
-    const bufLen = c.sampleRate * dur;
-    const buf = c.createBuffer(1, bufLen, c.sampleRate);
-    const data = buf.getChannelData(0);
-    let prev = 0;
-    for (let i = 0; i < bufLen; i++) {
-      prev = prev * 0.96 + (Math.random() * 2 - 1) * 0.04;
-      data[i] = prev * Math.sin(Math.PI * i / bufLen); // smooth envelope
-    }
+    const buf = getOrCreateNoiseBuffer('tape_warmth_bed', dur, (data, bufLen) => {
+      let prev = 0;
+      for (let i = 0; i < bufLen; i++) {
+        prev = prev * 0.96 + (_rng() * 2 - 1) * 0.04;
+        data[i] = prev * Math.sin(Math.PI * i / bufLen);
+      }
+    });
     const src = c.createBufferSource(), g = c.createGain();
     const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900;
     src.buffer = buf;
@@ -842,7 +1102,7 @@ export function startAmbient(dests) {
   function playChordPad() {
     if (!ambientRunning) return;
     if (currentScale.length < 5) { ambientTimers.push(setTimeout(playChordPad, 3000)); return; }
-    const degrees = [[0, 2, 4], [5, 0, 2], [3, 5, 0], [4, 6, 1]]; // i–vi–iv–v-ish
+    const degrees = [[0, 2, 4], [5, 0, 2], [3, 5, 0], [4, 6, 1]];
     const deg = pick(degrees);
     const voicing = buildVoicing(currentScale, deg, chance(0.5) ? 0 : 7);
     const dur = barDur() * rnd(2, 3);
@@ -882,7 +1142,6 @@ export function startAmbient(dests) {
     ambientTimers.push(setTimeout(playSubPulse, dur * 1000 + rnd(500, 1500)));
   }
 
-  // Launch all ambient layers
   playDrone();
   playCrackle();
   playHiss();
