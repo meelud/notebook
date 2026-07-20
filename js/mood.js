@@ -820,7 +820,10 @@ export function detectMood(text) {
         };
         const target = catTargets[topCat];
         if (target !== undefined) {
-          idx = Math.round(idx * 0.7 + target * 0.3);
+          // Dominant emotion should firmly drive the scale (80% weight), preventing
+          // everyday neutral filler words (the, is, etc.) from crushing the vibe
+          // and dragging joyful/love notes down into the somber middle.
+          idx = Math.round(idx * 0.2 + target * 0.8);
         }
       }
     }

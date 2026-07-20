@@ -95,14 +95,14 @@
       "text": "I am so happy today!",
       "hash": 2965118663,
       "mood": {
-        "mode": "blues",
+        "mode": "lydian",
         "normScore": 0.6833333333333335,
         "tenseScore": 0.16666666666666666
       },
       "analysis": {
-        "mode": "blues",
+        "mode": "lydian",
         "valence": 0.683333,
-        "darkness": 0.190476,
+        "darkness": 0.095238,
         "tension": 0.166667,
         "nostalgia": 0,
         "density": 0.2
@@ -112,14 +112,14 @@
       "text": "I am not happy at all.",
       "hash": 4178857776,
       "mood": {
-        "mode": "dorian",
+        "mode": "mixolydian",
         "normScore": -0.3116666666666667,
         "tenseScore": 0.049999999999999996
       },
       "analysis": {
-        "mode": "dorian",
+        "mode": "mixolydian",
         "valence": -0.311667,
-        "darkness": 0.428571,
+        "darkness": 0.142857,
         "tension": 0.05,
         "nostalgia": 0,
         "density": 0.166667
@@ -129,14 +129,14 @@
       "text": "not not happy",
       "hash": 3355577926,
       "mood": {
-        "mode": "dorianB2",
+        "mode": "blues",
         "normScore": -0.4363333333333333,
         "tenseScore": 0.06999999999999999
       },
       "analysis": {
-        "mode": "dorianB2",
+        "mode": "blues",
         "valence": -0.436333,
-        "darkness": 0.47619,
+        "darkness": 0.190476,
         "tension": 0.07,
         "nostalgia": 0,
         "density": 0.333333
@@ -146,14 +146,14 @@
       "text": "this is beautiful and calm",
       "hash": 986409835,
       "mood": {
-        "mode": "aeolianDominant",
+        "mode": "enigmatic",
         "normScore": 0.3266666666666666,
         "tenseScore": -0.13999999999999999
       },
       "analysis": {
-        "mode": "aeolianDominant",
+        "mode": "enigmatic",
         "valence": 0.326667,
-        "darkness": 0.333333,
+        "darkness": 0.285714,
         "tension": 0,
         "nostalgia": 0,
         "density": 0.2
@@ -163,14 +163,14 @@
       "text": "everything is falling apart, I feel broken",
       "hash": 1620482226,
       "mood": {
-        "mode": "harmonicMinor",
+        "mode": "minor",
         "normScore": -0.4666666666666666,
         "tenseScore": 0.04666666666666666
       },
       "analysis": {
-        "mode": "harmonicMinor",
+        "mode": "minor",
         "valence": -0.466667,
-        "darkness": 0.666667,
+        "darkness": 0.619048,
         "tension": 0.046667,
         "nostalgia": 0,
         "density": 0.142857
@@ -180,14 +180,14 @@
       "text": "I remember the old days, the summer of my childhood",
       "hash": 829450778,
       "mood": {
-        "mode": "pentMinor",
+        "mode": "dorianB2",
         "normScore": -0.19606121493043946,
         "tenseScore": -0.09803060746521973
       },
       "analysis": {
-        "mode": "pentMinor",
+        "mode": "dorianB2",
         "valence": -0.196061,
-        "darkness": 0.52381,
+        "darkness": 0.47619,
         "tension": 0,
         "nostalgia": 1,
         "density": 0.3
@@ -248,14 +248,14 @@
       "text": "دلم برای گذشته تنگ شده",
       "hash": 4287338157,
       "mood": {
-        "mode": "aeolianDominant",
+        "mode": "mixolydian",
         "normScore": 0.16666666666666666,
         "tenseScore": -0.03333333333333333
       },
       "analysis": {
-        "mode": "aeolianDominant",
+        "mode": "mixolydian",
         "valence": 0.166667,
-        "darkness": 0.333333,
+        "darkness": 0.142857,
         "tension": 0,
         "nostalgia": 1,
         "density": 0.4
@@ -265,14 +265,14 @@
       "text": "این خیلی زیبا و آرامش‌بخشه",
       "hash": 2077018722,
       "mood": {
-        "mode": "lydian",
+        "mode": "pentMajor",
         "normScore": 1.1786666666666668,
         "tenseScore": -0.238
       },
       "analysis": {
-        "mode": "lydian",
+        "mode": "pentMajor",
         "valence": 1.178667,
-        "darkness": 0.095238,
+        "darkness": 0.047619,
         "tension": 0,
         "nostalgia": 0,
         "density": 0.2
@@ -333,14 +333,14 @@
       "text": "😀😀😀 great vibes",
       "hash": 2695109107,
       "mood": {
-        "mode": "aeolianDominant",
+        "mode": "mixolydian",
         "normScore": 0.25666666666666665,
         "tenseScore": 0
       },
       "analysis": {
-        "mode": "aeolianDominant",
+        "mode": "mixolydian",
         "valence": 0.256667,
-        "darkness": 0.333333,
+        "darkness": 0.142857,
         "tension": 0,
         "nostalgia": 0,
         "density": 1
