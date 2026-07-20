@@ -1,4 +1,4 @@
-import { buildScale, detectMood, analyzeText, buildVoicing, hashText, ROOT_CANDIDATES_LOW, ROOT_CANDIDATES_MID } from './mood.js';
+import { buildScale, detectMood, analyzeText, buildVoicing, hashText, ROOT_CANDIDATES_LOW, ROOT_CANDIDATES_MID, MODE_ORDER } from './mood.js';
 
 // ──────────────────────────────────────────────────────────────
 //  Audio Context & Master Bus
@@ -968,8 +968,8 @@ const BAR_BEATS = 4;
 function beatDur() { return BEAT_SEC; }
 function barDur() { return BEAT_SEC * BAR_BEATS; }
 function moodDarkness() {
-  const idx = ['lydian', 'major', 'mixolydian', 'dorian', 'melodicMinor', 'minor', 'phrygian', 'locrian', 'diminished', 'phrygianDominant', 'doubleHarmonic', 'enigmatic', 'harmonicMinor', 'pentMajor', 'pentMinor', 'wholeTone'].indexOf(currentMode);
-  return idx < 0 ? 0.5 : idx / 15;
+  const idx = MODE_ORDER.indexOf(currentMode);
+  return idx < 0 ? 0.5 : idx / (MODE_ORDER.length - 1);
 }
 
 let ambientRunning = false;
