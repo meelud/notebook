@@ -183,8 +183,10 @@ function startPlayback() {
         const result = playWord(token.word, sentenceType, progress, null, token.len);
         highlightWord(silentIdx); // highlight the word that's actually playing
         const wordDur = result.duration || 0.4;
-        const gap = wordDur * rnd(0.5, 0.8) + 0.05;
-        playTimeout = setTimeout(playNext, (silence + gap) * 1000);
+        // The silence already contains the natural breath duration. Do NOT add the
+        // relative gap offset of the next note on top of it, otherwise we introduce
+        // an artificial lag that ruptures the musical rhythm. Only delay by the breath.
+        playTimeout = setTimeout(playNext, silence * 1000);
       }, silence * 1000);
       return;
     }

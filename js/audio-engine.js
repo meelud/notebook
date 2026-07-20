@@ -991,7 +991,9 @@ export function startAmbient(dests) {
     osc.type = 'sawtooth'; osc.frequency.value = f;
     osc.detune.value = rnd(-6, 6);
     const dur = barDur() * rnd(2, 4);
-    const peak = rnd(0.02, 0.04) * (0.5 + ambientDensity * 0.5);
+    // Dynamic volume matching: reduce the heavy deep drone volume in bright moods
+    // so the mix becomes clean, airy, and joyful, while retaining deep weight in dark moods.
+    const peak = rnd(0.02, 0.04) * (0.5 + ambientDensity * 0.5) * (0.2 + moodDarkness() * 0.8);
     g.gain.setValueAtTime(0, c.currentTime);
     g.gain.linearRampToValueAtTime(peak, c.currentTime + dur * 0.3);
     g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur);
@@ -1015,7 +1017,8 @@ export function startAmbient(dests) {
     const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2500;
     const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 300;
     src.buffer = buf;
-    const peak = rnd(0.015, 0.03) * (0.3 + ambientDensity * 0.4);
+    // Quiet down vinyl crackle when the music is bright so it feels less koder/dirty
+    const peak = rnd(0.015, 0.03) * (0.3 + ambientDensity * 0.4) * (0.3 + moodDarkness() * 0.7);
     g.gain.setValueAtTime(peak, c.currentTime);
     g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur);
     src.connect(lp); lp.connect(hp); hp.connect(g);
@@ -1039,7 +1042,8 @@ export function startAmbient(dests) {
     const src = c.createBufferSource(), g = c.createGain();
     const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1800;
     src.buffer = buf;
-    const peak = rnd(0.008, 0.018) * (0.4 + ambientDensity * 0.3);
+    // Lower tape hiss in bright moods
+    const peak = rnd(0.008, 0.018) * (0.4 + ambientDensity * 0.3) * (0.3 + moodDarkness() * 0.7);
     g.gain.setValueAtTime(0, c.currentTime);
     g.gain.linearRampToValueAtTime(peak, c.currentTime + dur * 0.2);
     g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur);
