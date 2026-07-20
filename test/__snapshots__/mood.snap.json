@@ -146,14 +146,14 @@
       "text": "this is beautiful and calm",
       "hash": 986409835,
       "mood": {
-        "mode": "enigmatic",
+        "mode": "wholeTone",
         "normScore": 0.3266666666666666,
         "tenseScore": -0.13999999999999999
       },
       "analysis": {
-        "mode": "enigmatic",
+        "mode": "wholeTone",
         "valence": 0.326667,
-        "darkness": 0.285714,
+        "darkness": 0.238095,
         "tension": 0,
         "nostalgia": 0,
         "density": 0.2
@@ -197,14 +197,14 @@
       "text": "خوشحالم",
       "hash": 4177735221,
       "mood": {
-        "mode": "melodicMinor",
+        "mode": "aeolianDominant",
         "normScore": 0.3666666666666667,
         "tenseScore": 0
       },
       "analysis": {
-        "mode": "melodicMinor",
+        "mode": "aeolianDominant",
         "valence": 0.366667,
-        "darkness": 0.380952,
+        "darkness": 0.333333,
         "tension": 0,
         "nostalgia": 0,
         "density": 0
@@ -231,14 +231,14 @@
       "text": "نمی‌ترسم",
       "hash": 3049252408,
       "mood": {
-        "mode": "dorian",
+        "mode": "melodicMinor",
         "normScore": 0.255,
         "tenseScore": 0.13333333333333333
       },
       "analysis": {
-        "mode": "dorian",
+        "mode": "melodicMinor",
         "valence": 0.255,
-        "darkness": 0.428571,
+        "darkness": 0.380952,
         "tension": 0.133333,
         "nostalgia": 0,
         "density": 0
@@ -333,14 +333,14 @@
       "text": "😀😀😀 great vibes",
       "hash": 2695109107,
       "mood": {
-        "mode": "mixolydian",
+        "mode": "lydian",
         "normScore": 0.25666666666666665,
         "tenseScore": 0
       },
       "analysis": {
-        "mode": "mixolydian",
+        "mode": "lydian",
         "valence": 0.256667,
-        "darkness": 0.142857,
+        "darkness": 0.095238,
         "tension": 0,
         "nostalgia": 0,
         "density": 1

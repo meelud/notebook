@@ -769,9 +769,11 @@ export function detectMood(text) {
     // choose among the brighter half (indices 8..15 = dorian→major side)
     idx = 8 + (h % (MODE_ORDER.length - 8));
   } else {
-    // map continuous score onto 16-mode spectrum
-    const clamped = Math.max(-1.5, Math.min(1.5, norm));
-    idx = Math.round(((clamped + 1.5) / 3.0) * (MODE_ORDER.length - 1));
+    // map continuous score onto 22-mode spectrum with enhanced line mapping
+    // range of [-1.1, 1.1] prevents compression of average positive/negative texts
+    const clamped = Math.max(-1.1, Math.min(1.1, norm));
+    const normPercent = (clamped + 1.1) / 2.2;
+    idx = Math.round(Math.max(0, Math.min(1, normPercent)) * (MODE_ORDER.length - 1));
     // high tension → pull toward the exotic/unstable cluster (first 5 modes)
     if (tenseNorm > 0.5 && idx > 3) idx = Math.max(1, idx - 4);
   }
