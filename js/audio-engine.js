@@ -291,35 +291,38 @@ export function getNoiseCacheStats() {
 //  Reverb — Task 3: dark warm reverb (LP-filtered noise buffer)
 // ──────────────────────────────────────────────────────────────
 let reverbNode;
-function buildReverb() {
+function buildReverb(darkness = 0.5) {
   const c = ensureCtx();
-  const len = 3.2, rate = c.sampleRate, frames = rate * len;
+  // darkness: 0=bright(short tail) → 1=dark(long tail), range 2.0..4.2s
+  const len = 2.0 + darkness * 2.2;
+  const rate = c.sampleRate, frames = Math.floor(rate * len);
   const buf = c.createBuffer(2, frames, rate);
-  // generate LP-filtered noise for a dark, warm reverb tail (Burial aesthetic)
   for (let ch = 0; ch < 2; ch++) {
     const data = buf.getChannelData(ch);
     let prev = 0;
-    const lpCoeff = 0.72; // strong LP filtering — removes all harshness from tail
+    const lpCoeff = 0.72;
+    const decayExp = 2.2 - darkness * 0.8; // 2.2 (bright) → 1.4 (dark)
     for (let i = 0; i < frames; i++) {
       const noise = _rng() * 2 - 1;
-      // one-pole LP filter applied directly during buffer generation
       prev = prev * lpCoeff + noise * (1 - lpCoeff);
-      // exponential decay envelope
-      data[i] = prev * Math.pow(1 - i / frames, 2.2);
+      data[i] = prev * Math.pow(1 - i / frames, decayExp);
     }
   }
-  const conv = c.createConvolver();
-  conv.buffer = buf;
-  // reverb send chain: convolver → gentle LP to darken further → master bus
-  const rvbLP = c.createBiquadFilter();
-  rvbLP.type = 'lowpass';
-  rvbLP.frequency.value = 2200; // dark reverb — cut highs
-  const rvbGain = c.createGain();
-  rvbGain.gain.value = 0.35;
-  conv.connect(rvbLP);
-  rvbLP.connect(rvbGain);
-  rvbGain.connect(getMasterBus());
-  reverbNode = conv;
+  if (!reverbNode) {
+    // First call: build the full chain (ConvolverNode + LP + gain → master)
+    const conv = c.createConvolver();
+    const rvbLP = c.createBiquadFilter();
+    rvbLP.type = 'lowpass';
+    rvbLP.frequency.value = 2200;
+    const rvbGain = c.createGain();
+    rvbGain.gain.value = 0.35;
+    conv.connect(rvbLP);
+    rvbLP.connect(rvbGain);
+    rvbGain.connect(getMasterBus());
+    reverbNode = conv;
+  }
+  // Subsequent calls: only swap the buffer — no new nodes, no stacking
+  reverbNode.buffer = buf;
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -386,14 +389,20 @@ function stepwiseNoteIndex(scaleLen) {
 //  Silence / Breath — Task 8: Musical rests
 // ──────────────────────────────────────────────────────────────
 export function getSilenceDuration(punctBefore, wordIndex, totalWords) {
+  // tension shortens silences (urgency, breathlessness),
+  // nostalgia lengthens them (space, memory, slowness).
+  const tensionScale  = 1.0 - currentTension  * 0.45; // 1.0 (calm) → 0.55 (tense)
+  const nostalgiaScale = 1.0 + currentNostalgia * 0.6; // 1.0 (none) → 1.6 (nostalgic)
+  const scale = tensionScale * nostalgiaScale;
+
   // After paragraph break / double newline: long breath
-  if (punctBefore && /(\n\s*\n|\.{3,})/.test(punctBefore)) return rnd(1.2, 2.0);
+  if (punctBefore && /(\n\s*\n|\.{3,})/.test(punctBefore)) return rnd(1.2, 2.0) * scale;
   // After period / exclamation / question: medium breath
-  if (punctBefore && /[.!?؟]/.test(punctBefore)) return rnd(0.5, 1.0);
+  if (punctBefore && /[.!?؟]/.test(punctBefore)) return rnd(0.5, 1.0) * scale;
   // After comma / semicolon: short breath
-  if (punctBefore && /[,;،؛:]/.test(punctBefore)) return rnd(0.15, 0.4);
-  // Random musical rest (sparse): ~12% chance of a tiny breath between words
-  if (chance(0.12)) return rnd(0.08, 0.25);
+  if (punctBefore && /[,;،؛:]/.test(punctBefore)) return rnd(0.15, 0.4) * scale;
+  // Random musical rest: tense text is less likely to pause, nostalgic more likely
+  if (chance(0.12 - currentTension * 0.06 + currentNostalgia * 0.08)) return rnd(0.08, 0.25) * scale;
   return 0;
 }
 
@@ -800,16 +809,16 @@ export const VOICES = {
 
   vinyl(f, dur, vol, dest, wordLen) {
     const c = ac;
-    const buf = getOrCreateNoiseBuffer('vinyl_crackle', dur, (data, bufLen) => {
+    const buf = getOrCreateNoiseBuffer('vinyl', dur, (data, bufLen) => {
       for (let i = 0; i < bufLen; i++) {
-        data[i] = chance(0.003) ? rnd(-0.15, 0.15) : (_rng() * 2 - 1) * 0.008;
+        data[i] = (_rng() * 2 - 1) * 0.03 + (chance(0.005) ? rnd(-0.3, 0.3) : 0);
       }
     });
     const src = c.createBufferSource(), g = c.createGain();
     const lp = c.createBiquadFilter();
-    lp.type = 'lowpass'; lp.frequency.value = 2500;
+    lp.type = 'lowpass'; lp.frequency.value = 2000;
     const hp = c.createBiquadFilter();
-    hp.type = 'highpass'; hp.frequency.value = 300;
+    hp.type = 'highpass'; hp.frequency.value = 200;
     src.buffer = buf;
     const peakVol = vol * 0.12 * rnd(0.85, 1.0);
     g.gain.setValueAtTime(peakVol, c.currentTime);
@@ -824,7 +833,7 @@ export const VOICES = {
 
   tape(f, dur, vol, dest, wordLen) {
     const c = ac;
-    const buf = getOrCreateNoiseBuffer('tape_hiss', dur, (data, bufLen) => {
+    const buf = getOrCreateNoiseBuffer('tape', dur, (data, bufLen) => {
       let prev = 0;
       for (let i = 0; i < bufLen; i++) {
         prev = prev * 0.95 + (_rng() * 2 - 1) * 0.05;
@@ -922,6 +931,12 @@ export function setMood(text) {
   const mood = detectMood(text);
   const analysis = analyzeText(text);
   currentMode = mood.mode;
+  currentDarkness  = analysis.darkness  ?? 0.5;
+  currentTension   = analysis.tension   ?? 0.0;
+  currentNostalgia = analysis.nostalgia ?? 0.0;
+  // Rebuild reverb with darkness-aware tail length so dark/nostalgic text
+  // sits in a deeper, more atmospheric space.
+  buildReverb(currentDarkness);
   currentScale = buildScale(220, currentMode);
   ambientDensity = analysis.density || 0;
   return { mood, analysis };
